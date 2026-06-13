@@ -5,8 +5,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import javax.inject.Inject;
 import lombok.Value;
@@ -69,6 +71,7 @@ public class DuplicatePrayersPlugin extends Plugin
 	private ConfigManager configManager;
 
 	private final Map<Widget, Slot> duplicateWidgets = new HashMap<>();
+	private final Set<Widget> duplicateParents = new HashSet<>();
 
 	@Override
 	protected void startUp()
@@ -116,7 +119,7 @@ public class DuplicatePrayersPlugin extends Plugin
 		int scriptId = event.getScriptId();
 		if (scriptId == ScriptID.PRAYER_UPDATEBUTTON || scriptId == ScriptID.PRAYER_REDRAW)
 		{
-			rebuildPrayers();
+			clientThread.invokeLater(this::rebuildPrayers);
 		}
 	}
 
@@ -484,20 +487,19 @@ public class DuplicatePrayersPlugin extends Plugin
 
 	private Widget createDuplicateWidget(Widget original, Slot slot, int x, int y, boolean canDuplicate)
 	{
-		Widget universe = client.getWidget(InterfaceID.Prayerbook.UNIVERSE);
-		Widget duplicate = universe.createChild(-1, WidgetType.LAYER);
 		Widget originalParent = original.getParent();
-		int parentOffsetX = 0;
-		int parentOffsetY = 0;
-		if (originalParent != null)
+		Widget parent = originalParent != null ? originalParent : client.getWidget(InterfaceID.Prayerbook.UNIVERSE);
+		Widget duplicate = parent.createChild(-1, WidgetType.LAYER);
+		duplicateParents.add(parent);
+
+		if (originalParent == null)
 		{
-			parentOffsetX = originalParent.getCanvasLocation().getX() - universe.getCanvasLocation().getX();
-			parentOffsetY = originalParent.getCanvasLocation().getY() - universe.getCanvasLocation().getY();
+			log.debug("Prayer {} had no parent; duplicate was attached to Prayerbook.UNIVERSE", slot.getPrayerId());
 		}
 
 		duplicate.setName(original.getName());
 		duplicate.setSize(original.getWidth(), original.getHeight(), WidgetSizeMode.ABSOLUTE, WidgetSizeMode.ABSOLUTE);
-		duplicate.setPos(parentOffsetX + x, parentOffsetY + y, WidgetPositionMode.ABSOLUTE_LEFT, WidgetPositionMode.ABSOLUTE_TOP);
+		duplicate.setPos(x, y, WidgetPositionMode.ABSOLUTE_LEFT, WidgetPositionMode.ABSOLUTE_TOP);
 		duplicate.setClickMask(original.getClickMask() | DRAG | DRAG_ON);
 		duplicate.setAction(0, getPrimaryAction(original));
 		duplicate.setAction(DUPLICATE_OP, canDuplicate ? DUPLICATE : null);
@@ -620,11 +622,14 @@ public class DuplicatePrayersPlugin extends Plugin
 	{
 		duplicateWidgets.clear();
 
-		Widget universe = client.getWidget(InterfaceID.Prayerbook.UNIVERSE);
-		if (universe != null)
+		for (Widget parent : duplicateParents)
 		{
-			universe.deleteAllChildren();
+			if (parent != null)
+			{
+				parent.deleteAllChildren();
+			}
 		}
+		duplicateParents.clear();
 	}
 
 	private boolean isPrayerBookOpen()
