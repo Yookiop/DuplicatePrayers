@@ -126,6 +126,8 @@ public class DuplicatePrayersPlugin extends Plugin
 	@Subscribe
 	public void onMenuOptionClicked(MenuOptionClicked event)
 	{
+		logPrayerClick(event);
+
 		if (event.getMenuAction() != MenuAction.CC_OP || !DUPLICATE.equals(event.getMenuOption()))
 		{
 			return;
@@ -144,8 +146,31 @@ public class DuplicatePrayersPlugin extends Plugin
 			return;
 		}
 
+		log.debug("Duplicating prayer: prayerbook={} prayerId={} widget={} param0={} param1={} id={} option={} target={}",
+			prayerbook, prayerId, widget.getId(), event.getParam0(), event.getParam1(), event.getId(),
+			event.getMenuOption(), event.getMenuTarget());
+
 		event.consume();
 		duplicatePrayer(prayerbook, prayerId);
+	}
+
+	private void logPrayerClick(MenuOptionClicked event)
+	{
+		Widget widget = event.getWidget();
+		if (widget == null || event.getMenuAction() != MenuAction.CC_OP)
+		{
+			return;
+		}
+
+		int groupId = WidgetUtil.componentToInterface(widget.getId());
+		if (groupId != InterfaceID.PRAYERBOOK)
+		{
+			return;
+		}
+
+		log.debug("Prayer widget click: widget={} index={} param0={} param1={} id={} itemId={} option={} target={} actions={}",
+			widget.getId(), widget.getIndex(), event.getParam0(), event.getParam1(), event.getId(), event.getItemId(),
+			event.getMenuOption(), event.getMenuTarget(), Arrays.toString(widget.getActions()));
 	}
 
 	@Subscribe
@@ -508,6 +533,9 @@ public class DuplicatePrayersPlugin extends Plugin
 		duplicate.setOnOpListener((JavaScriptCallback) event ->
 		{
 			int op = event.getOp();
+			log.debug("Duplicate prayer op: prayerId={} duplicateId={} op={} duplicateWidget={} originalWidget={}",
+				slot.getPrayerId(), slot.getDuplicateId(), op, duplicate.getId(), original.getId());
+
 			if (op == ACTIVATE_OP)
 			{
 				activateOriginalPrayer(original);
@@ -535,18 +563,16 @@ public class DuplicatePrayersPlugin extends Plugin
 
 	private void activateOriginalPrayer(Widget original)
 	{
-		Object[] listener = original.getOnOpListener();
-		if (listener != null)
-		{
-			client.createScriptEventBuilder(listener)
-				.setSource(original)
-				.setOp(ACTIVATE_OP)
-				.build()
-				.run();
-			return;
-		}
+		String option = getPrimaryAction(original);
+		String target = original.getName();
+		int param0 = -1;
+		int param1 = original.getId();
 
-		client.menuAction(original.getIndex(), original.getId(), MenuAction.CC_OP, ACTIVATE_OP, -1, getPrimaryAction(original), original.getName());
+		log.debug("Activating original prayer from duplicate: widget={} index={} param0={} param1={} op={} option={} target={} actions={} hasListener={}",
+			original.getId(), original.getIndex(), param0, param1, ACTIVATE_OP, option, target,
+			Arrays.toString(original.getActions()), original.hasListener());
+
+		client.menuAction(param0, param1, MenuAction.CC_OP, ACTIVATE_OP, -1, option, target);
 	}
 
 	private void removeDuplicate(int prayerbook, Slot slot)
