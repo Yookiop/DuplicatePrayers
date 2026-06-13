@@ -21,6 +21,7 @@ import net.runelite.api.ItemComposition;
 import net.runelite.api.MenuAction;
 import net.runelite.api.ParamID;
 import net.runelite.api.ScriptID;
+import net.runelite.api.Skill;
 import net.runelite.api.events.MenuOptionClicked;
 import net.runelite.api.events.ScriptPostFired;
 import net.runelite.api.events.WidgetDrag;
@@ -54,8 +55,8 @@ public class DuplicatePrayersPlugin extends Plugin
 	private static final int PRAYER_Y_OFFSET = 37;
 	private static final int PRAYER_COLUMN_COUNT = 5;
 	private static final int MAX_VISIBLE_PRAYERS = 30;
-	private static final int DUPLICATE_OP = 3;
-	private static final int REMOVE_DUPLICATE_OP = 4;
+	private static final int DUPLICATE_OP = 4;
+	private static final int REMOVE_DUPLICATE_OP = 5;
 	private static final int ACTIVATE_OP = 1;
 	private static final String PRAYER_CONFIG_GROUP = "prayer";
 	private static final String DUPLICATE = "Duplicate";
@@ -72,6 +73,7 @@ public class DuplicatePrayersPlugin extends Plugin
 
 	private final Map<Widget, Slot> duplicateWidgets = new HashMap<>();
 	private final Set<Widget> duplicateParents = new HashSet<>();
+	private int lastPrayerPoints = -1;
 
 	@Override
 	protected void startUp()
@@ -119,8 +121,25 @@ public class DuplicatePrayersPlugin extends Plugin
 		int scriptId = event.getScriptId();
 		if (scriptId == ScriptID.PRAYER_UPDATEBUTTON || scriptId == ScriptID.PRAYER_REDRAW)
 		{
+			logPrayerUpdate(scriptId);
+			rebuildPrayers();
 			clientThread.invokeLater(this::rebuildPrayers);
 		}
+	}
+
+	private void logPrayerUpdate(int scriptId)
+	{
+		int prayerPoints = client.getBoostedSkillLevel(Skill.PRAYER);
+		if (scriptId == ScriptID.PRAYER_UPDATEBUTTON && prayerPoints != lastPrayerPoints)
+		{
+			log.debug("Prayer update button fired after prayer point change: previous={} current={}",
+				lastPrayerPoints, prayerPoints);
+		}
+		else
+		{
+			log.debug("Prayer script fired: scriptId={} currentPrayer={}", scriptId, prayerPoints);
+		}
+		lastPrayerPoints = prayerPoints;
 	}
 
 	@Subscribe
