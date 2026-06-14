@@ -3,12 +3,11 @@ package com.duplicateprayers;
 import com.google.inject.Provides;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.stream.Collectors;
 import javax.inject.Inject;
 import lombok.Value;
@@ -38,6 +37,7 @@ import net.runelite.api.widgets.WidgetUtil;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.events.ProfileChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
@@ -55,6 +55,7 @@ public class DuplicatePrayersPlugin extends Plugin
 	private static final int PRAYER_Y_OFFSET = 37;
 	private static final int PRAYER_COLUMN_COUNT = 5;
 	private static final int MAX_VISIBLE_PRAYERS = 30;
+	private static final int HIDE_OP = 3;
 	private static final int DUPLICATE_OP = 4;
 	private static final int REMOVE_DUPLICATE_OP = 5;
 	private static final int ACTIVATE_OP = 1;
@@ -71,8 +72,11 @@ public class DuplicatePrayersPlugin extends Plugin
 	@Inject
 	private ConfigManager configManager;
 
+	@Inject
+	private DuplicatePrayersConfig config;
+
 	private final Map<Widget, Slot> duplicateWidgets = new HashMap<>();
-	private final Set<Widget> duplicateParents = new HashSet<>();
+	private Widget duplicateRoot;
 	private int lastPrayerPoints = -1;
 
 	@Override
@@ -113,6 +117,15 @@ public class DuplicatePrayersPlugin extends Plugin
 	public void onProfileChanged(ProfileChanged event)
 	{
 		clientThread.invokeLater(this::redrawPrayers);
+	}
+
+	@Subscribe
+	public void onConfigChanged(ConfigChanged event)
+	{
+		if (DuplicatePrayersConfig.GROUP.equals(event.getGroup()))
+		{
+			clientThread.invokeLater(this::rebuildPrayers);
+		}
 	}
 
 	@Subscribe
@@ -473,10 +486,15 @@ public class DuplicatePrayersPlugin extends Plugin
 		int prayerbook = client.getVarbitValue(VarbitID.PRAYERBOOK);
 		EnumComposition prayerBookEnum = getPrayerBookEnum(prayerbook);
 		List<Slot> slots = getPrayerSlots(prayerbook);
+		boolean prayerReordering = isPrayerReorderingUnlocked(prayerBookEnum);
+		List<Slot> swappedSlots = applyConfiguredHiddenSwaps(prayerbook, prayerBookEnum, slots);
+		List<Slot> renderSlots = prayerReordering && config.prioritizeOriginalPrayersWhenReordering()
+			? prioritizeOriginalPrayerSlots(swappedSlots)
+			: swappedSlots;
 		boolean canDuplicate = visibleSlotCount(prayerbook, slots) < MAX_VISIBLE_PRAYERS;
 
 		int index = 0;
-		for (Slot slot : slots)
+		for (Slot slot : renderSlots)
 		{
 			Widget original = getPrayerWidget(prayerBookEnum, slot.getPrayerId());
 			if (original == null)
@@ -484,9 +502,11 @@ public class DuplicatePrayersPlugin extends Plugin
 				continue;
 			}
 
-			if (!slot.isDuplicate() && isHidden(prayerbook, slot.getPrayerId()))
+			boolean hidden = !slot.isDuplicate() && isHidden(prayerbook, slot.getPrayerId());
+			if (hidden && !prayerReordering)
 			{
 				original.setHidden(true);
+				++index;
 				continue;
 			}
 
@@ -512,6 +532,14 @@ public class DuplicatePrayersPlugin extends Plugin
 			else
 			{
 				original.setHidden(false);
+				if (prayerReordering)
+				{
+					original.setAction(HIDE_OP, hidden ? "Unhide" : "Hide");
+					if (hidden && original.getChild(1) != null)
+					{
+						original.getChild(1).setOpacity(200);
+					}
+				}
 				original.setAction(DUPLICATE_OP, canDuplicate ? DUPLICATE : null);
 				original.setClickMask(original.getClickMask() | DRAG | DRAG_ON);
 				original.setPos(widgetX, widgetY);
@@ -529,19 +557,157 @@ public class DuplicatePrayersPlugin extends Plugin
 		return client.getWidget(prayerObj.getIntValue(ParamID.OC_PRAYER_COMPONENT));
 	}
 
-	private Widget createDuplicateWidget(Widget original, Slot slot, int x, int y, boolean canDuplicate)
+	private boolean isPrayerReorderingUnlocked(EnumComposition prayerBookEnum)
 	{
-		Widget originalParent = original.getParent();
-		Widget parent = originalParent != null ? originalParent : client.getWidget(InterfaceID.Prayerbook.UNIVERSE);
-		Widget duplicate = parent.createChild(-1, WidgetType.LAYER);
-		duplicateParents.add(parent);
-
-		if (originalParent == null)
+		for (int prayerId : prayerBookEnum.getKeys())
 		{
-			log.debug("Prayer {} had no parent; duplicate was attached to Prayerbook.UNIVERSE", slot.getPrayerId());
+			Widget prayerWidget = getPrayerWidget(prayerBookEnum, prayerId);
+			if (prayerWidget == null)
+			{
+				continue;
+			}
+
+			String[] actions = prayerWidget.getActions();
+			if (actions != null && actions.length > HIDE_OP
+				&& ("Hide".equals(actions[HIDE_OP]) || "Unhide".equals(actions[HIDE_OP])))
+			{
+				return true;
+			}
 		}
 
-		duplicate.setName(original.getName());
+		return false;
+	}
+
+	private List<Slot> applyConfiguredHiddenSwaps(int prayerbook, EnumComposition prayerBookEnum, List<Slot> slots)
+	{
+		String swapConfig = config.hiddenPrayerSwaps();
+		if (swapConfig == null || swapConfig.isBlank())
+		{
+			return slots;
+		}
+
+		List<Slot> swapped = new ArrayList<>(slots);
+		for (String entry : swapConfig.split("[,;\\n]"))
+		{
+			String trimmed = entry.trim();
+			if (trimmed.isEmpty())
+			{
+				continue;
+			}
+
+			String[] parts = trimmed.split("=", 2);
+			if (parts.length != 2)
+			{
+				log.debug("Ignoring invalid hidden prayer swap '{}'; expected hidden prayer=duplicate number", trimmed);
+				continue;
+			}
+
+			int hiddenPrayerId = parsePrayerReference(prayerBookEnum, parts[0].trim());
+			int duplicateId = parseInt(parts[1].trim(), -1);
+			if (hiddenPrayerId == -1 || duplicateId <= 0 || !isHidden(prayerbook, hiddenPrayerId))
+			{
+				continue;
+			}
+
+			int hiddenIdx = -1;
+			int duplicateIdx = -1;
+			for (int i = 0; i < swapped.size(); ++i)
+			{
+				Slot slot = swapped.get(i);
+				if (!slot.isDuplicate() && slot.getPrayerId() == hiddenPrayerId)
+				{
+					hiddenIdx = i;
+				}
+				else if (slot.isDuplicate() && slot.getDuplicateId() == duplicateId)
+				{
+					duplicateIdx = i;
+				}
+			}
+
+			if (hiddenIdx != -1 && duplicateIdx != -1)
+			{
+				Collections.swap(swapped, hiddenIdx, duplicateIdx);
+			}
+		}
+
+		return swapped;
+	}
+
+	private int parsePrayerReference(EnumComposition prayerBookEnum, String reference)
+	{
+		int prayerId = parseInt(reference, -1);
+		if (prayerId != -1 && containsPrayerKey(prayerBookEnum, prayerId))
+		{
+			return prayerId;
+		}
+
+		String normalizedReference = normalizePrayerName(reference);
+		for (int key : prayerBookEnum.getKeys())
+		{
+			int prayerObjId = prayerBookEnum.getIntValue(key);
+			ItemComposition prayerObj = client.getItemDefinition(prayerObjId);
+			if (normalizePrayerName(prayerObj.getName()).equals(normalizedReference))
+			{
+				return key;
+			}
+		}
+
+		return -1;
+	}
+
+	private int parseInt(String value, int fallback)
+	{
+		try
+		{
+			return Integer.parseInt(value);
+		}
+		catch (NumberFormatException ex)
+		{
+			return fallback;
+		}
+	}
+
+	private String normalizePrayerName(String name)
+	{
+		return name.replaceAll("<[^>]*>", "")
+			.trim()
+			.toLowerCase();
+	}
+
+	private List<Slot> prioritizeOriginalPrayerSlots(List<Slot> slots)
+	{
+		List<Slot> prioritized = new ArrayList<>();
+		int originalsRemaining = (int) slots.stream()
+			.filter(slot -> !slot.isDuplicate())
+			.count();
+
+		for (Slot slot : slots)
+		{
+			if (prioritized.size() >= MAX_VISIBLE_PRAYERS)
+			{
+				break;
+			}
+
+			if (slot.isDuplicate() && originalsRemaining > MAX_VISIBLE_PRAYERS - prioritized.size())
+			{
+				continue;
+			}
+
+			prioritized.add(slot);
+			if (!slot.isDuplicate())
+			{
+				--originalsRemaining;
+			}
+		}
+
+		return prioritized;
+	}
+
+	private Widget createDuplicateWidget(Widget original, Slot slot, int x, int y, boolean canDuplicate)
+	{
+		Widget duplicate = getDuplicateRoot().createChild(-1, WidgetType.LAYER);
+
+		duplicate.setName(original.getName() + " (duplicate " + slot.getDuplicateId() + ")");
 		duplicate.setSize(original.getWidth(), original.getHeight(), WidgetSizeMode.ABSOLUTE, WidgetSizeMode.ABSOLUTE);
 		duplicate.setPos(x, y, WidgetPositionMode.ABSOLUTE_LEFT, WidgetPositionMode.ABSOLUTE_TOP);
 		duplicate.setClickMask(original.getClickMask() | DRAG | DRAG_ON);
@@ -572,6 +738,21 @@ public class DuplicatePrayersPlugin extends Plugin
 		copyChildren(original, duplicate);
 		duplicate.revalidate();
 		return duplicate;
+	}
+
+	private Widget getDuplicateRoot()
+	{
+		Widget universe = client.getWidget(InterfaceID.Prayerbook.UNIVERSE);
+		if (duplicateRoot == null || duplicateRoot.getParent() != universe)
+		{
+			duplicateRoot = universe.createChild(-1, WidgetType.LAYER);
+			duplicateRoot.setSize(0, 0, WidgetSizeMode.MINUS, WidgetSizeMode.MINUS);
+			duplicateRoot.setPos(0, 0, WidgetPositionMode.ABSOLUTE_LEFT, WidgetPositionMode.ABSOLUTE_TOP);
+		}
+
+		duplicateRoot.setHidden(false);
+		duplicateRoot.revalidate();
+		return duplicateRoot;
 	}
 
 	private String getPrimaryAction(Widget original)
@@ -667,14 +848,12 @@ public class DuplicatePrayersPlugin extends Plugin
 	{
 		duplicateWidgets.clear();
 
-		for (Widget parent : duplicateParents)
+		if (duplicateRoot != null)
 		{
-			if (parent != null)
-			{
-				parent.deleteAllChildren();
-			}
+			duplicateRoot.deleteAllChildren();
+			duplicateRoot.setHidden(true);
+			duplicateRoot.revalidate();
 		}
-		duplicateParents.clear();
 	}
 
 	private boolean isPrayerBookOpen()
