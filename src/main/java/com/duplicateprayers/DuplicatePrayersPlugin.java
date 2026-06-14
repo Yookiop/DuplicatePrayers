@@ -76,7 +76,7 @@ public class DuplicatePrayersPlugin extends Plugin
 	private DuplicatePrayersConfig config;
 
 	private final Map<Widget, Slot> duplicateWidgets = new HashMap<>();
-	private Widget duplicateRoot;
+	private final Map<Widget, Widget> duplicateRoots = new HashMap<>();
 	private int lastPrayerPoints = -1;
 
 	@Override
@@ -595,15 +595,27 @@ public class DuplicatePrayersPlugin extends Plugin
 				continue;
 			}
 
-			String[] parts = trimmed.split("=", 2);
-			if (parts.length != 2)
+			int hiddenPrayerId;
+			int duplicateId;
+			String[] arrowParts = trimmed.split("\\s*->\\s*", 2);
+			if (arrowParts.length == 2)
 			{
-				log.debug("Ignoring invalid hidden prayer swap '{}'; expected hidden prayer=duplicate number", trimmed);
-				continue;
+				duplicateId = parseDuplicateReference(arrowParts[0].trim());
+				hiddenPrayerId = parsePrayerReference(prayerBookEnum, arrowParts[1].trim());
+			}
+			else
+			{
+				String[] parts = trimmed.split("=", 2);
+				if (parts.length != 2)
+				{
+					log.debug("Ignoring invalid hidden prayer swap '{}'; expected Duplicate Prayer (duplicate 1) -> Hidden Prayer", trimmed);
+					continue;
+				}
+
+				hiddenPrayerId = parsePrayerReference(prayerBookEnum, parts[0].trim());
+				duplicateId = parseDuplicateReference(parts[1].trim());
 			}
 
-			int hiddenPrayerId = parsePrayerReference(prayerBookEnum, parts[0].trim());
-			int duplicateId = parseInt(parts[1].trim(), -1);
 			if (hiddenPrayerId == -1 || duplicateId <= 0 || !isHidden(prayerbook, hiddenPrayerId))
 			{
 				continue;
@@ -653,6 +665,38 @@ public class DuplicatePrayersPlugin extends Plugin
 		}
 
 		return -1;
+	}
+
+	private int parseDuplicateReference(String reference)
+	{
+		int parsed = parseInt(reference, -1);
+		if (parsed > 0)
+		{
+			return parsed;
+		}
+
+		String lower = reference.toLowerCase();
+		int duplicateIdx = lower.indexOf("duplicate");
+		if (duplicateIdx == -1)
+		{
+			return -1;
+		}
+
+		StringBuilder digits = new StringBuilder();
+		for (int i = duplicateIdx + "duplicate".length(); i < lower.length(); ++i)
+		{
+			char c = lower.charAt(i);
+			if (Character.isDigit(c))
+			{
+				digits.append(c);
+			}
+			else if (digits.length() > 0)
+			{
+				break;
+			}
+		}
+
+		return digits.length() == 0 ? -1 : parseInt(digits.toString(), -1);
 	}
 
 	private int parseInt(String value, int fallback)
@@ -705,7 +749,7 @@ public class DuplicatePrayersPlugin extends Plugin
 
 	private Widget createDuplicateWidget(Widget original, Slot slot, int x, int y, boolean canDuplicate)
 	{
-		Widget duplicate = getDuplicateRoot().createChild(-1, WidgetType.LAYER);
+		Widget duplicate = getDuplicateRoot(original).createChild(-1, WidgetType.LAYER);
 
 		duplicate.setName(original.getName() + " (duplicate " + slot.getDuplicateId() + ")");
 		duplicate.setSize(original.getWidth(), original.getHeight(), WidgetSizeMode.ABSOLUTE, WidgetSizeMode.ABSOLUTE);
@@ -740,14 +784,22 @@ public class DuplicatePrayersPlugin extends Plugin
 		return duplicate;
 	}
 
-	private Widget getDuplicateRoot()
+	private Widget getDuplicateRoot(Widget original)
 	{
-		Widget universe = client.getWidget(InterfaceID.Prayerbook.UNIVERSE);
-		if (duplicateRoot == null || duplicateRoot.getParent() != universe)
+		Widget parent = original.getParent();
+		if (parent == null)
 		{
-			duplicateRoot = universe.createChild(-1, WidgetType.LAYER);
+			parent = client.getWidget(InterfaceID.Prayerbook.UNIVERSE);
+			log.debug("Prayer {} had no parent; duplicate root was attached to Prayerbook.UNIVERSE", original.getId());
+		}
+
+		Widget duplicateRoot = duplicateRoots.get(parent);
+		if (duplicateRoot == null || duplicateRoot.getParent() != parent)
+		{
+			duplicateRoot = parent.createChild(-1, WidgetType.LAYER);
 			duplicateRoot.setSize(0, 0, WidgetSizeMode.MINUS, WidgetSizeMode.MINUS);
 			duplicateRoot.setPos(0, 0, WidgetPositionMode.ABSOLUTE_LEFT, WidgetPositionMode.ABSOLUTE_TOP);
+			duplicateRoots.put(parent, duplicateRoot);
 		}
 
 		duplicateRoot.setHidden(false);
@@ -848,11 +900,14 @@ public class DuplicatePrayersPlugin extends Plugin
 	{
 		duplicateWidgets.clear();
 
-		if (duplicateRoot != null)
+		for (Widget duplicateRoot : duplicateRoots.values())
 		{
-			duplicateRoot.deleteAllChildren();
-			duplicateRoot.setHidden(true);
-			duplicateRoot.revalidate();
+			if (duplicateRoot != null)
+			{
+				duplicateRoot.deleteAllChildren();
+				duplicateRoot.setHidden(true);
+				duplicateRoot.revalidate();
+			}
 		}
 	}
 

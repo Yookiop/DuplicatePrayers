@@ -22,8 +22,8 @@ public interface DuplicatePrayersConfig extends Config
 
 	@ConfigItem(
 		keyName = "hiddenPrayerSwaps",
-		name = "Hidden prayer swaps",
-		description = "Comma-separated swaps from hidden prayer to duplicate number. Examples: Thick Skin=2, 0=3",
+		name = "Swap duplicates into hidden slots",
+		description = "One per line: duplicate shown in the right-click menu -> hidden prayer. Example: Protect from Melee (duplicate 1) -> Mystic Might",
 		position = 1
 	)
 	default String hiddenPrayerSwaps()
