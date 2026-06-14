@@ -156,15 +156,39 @@ public class DuplicatePrayersPlugin extends Plugin
 		clientThread.invokeLater(this::redrawPrayers);
 	}
 
+	private void syncAllDuplicatePrayerStates()
+	{
+		for (Map.Entry<Widget, Slot> entry : duplicateWidgets.entrySet())
+		{
+			Widget duplicate = entry.getKey();
+			Slot slot = entry.getValue();
+
+			if (duplicate == null || duplicate.isSelfHidden())
+			{
+				continue;
+			}
+
+			syncDuplicateActiveState(duplicate, slot.getPrayerId());
+		}
+	}
+
 	@Subscribe
 	public void onScriptPostFired(ScriptPostFired event)
 	{
-		int scriptId = event.getScriptId();
-		if (scriptId == ScriptID.PRAYER_UPDATEBUTTON || scriptId == ScriptID.PRAYER_REDRAW)
+		if (event.getScriptId() == ScriptID.PRAYER_REDRAW)
 		{
-			logPrayerUpdate(scriptId);
-			rebuildPrayers();
-			clientThread.invokeLater(this::rebuildPrayers);
+			clientThread.invokeLater(() ->
+			{
+				if (isPrayerBookOpen() && duplicateWidgets.isEmpty())
+				{
+					rebuildPrayers();
+				}
+			});
+		}
+
+		if (event.getScriptId() == ScriptID.PRAYER_UPDATEBUTTON)
+		{
+			syncAllDuplicatePrayerStates();
 		}
 	}
 
@@ -585,12 +609,38 @@ public class DuplicatePrayersPlugin extends Plugin
 		}
 	}
 
+	private void resetOriginalPrayerPositions()
+	{
+		int prayerbook = client.getVarbitValue(VarbitID.PRAYERBOOK);
+		EnumComposition prayerBookEnum = getPrayerBookEnum(prayerbook);
+
+		for (int prayerId : prayerBookEnum.getKeys())
+		{
+			Widget widget = getPrayerWidget(prayerBookEnum, prayerId);
+
+			if (widget == null)
+			{
+				continue;
+			}
+
+			widget.setHidden(false);
+
+			Widget activeBackground = widget.getChild(1);
+			if (activeBackground != null)
+			{
+				activeBackground.setOpacity(0);
+			}
+		}
+	}
+
 	private void rebuildPrayers()
 	{
 		if (!isPrayerBookOpen())
 		{
 			return;
 		}
+
+		resetOriginalPrayerPositions();
 
 		clearDuplicateWidgets();
 
@@ -605,7 +655,7 @@ public class DuplicatePrayersPlugin extends Plugin
 		List<Slot> renderSlots = prayerReordering
 			? prioritizeOriginalPrayerSlots(slots)
 			: slots;
-		boolean canDuplicate = visibleSlotCount(prayerbook, slots) < MAX_VISIBLE_PRAYERS;
+		boolean canDuplicate = true;
 
 		int index = 0;
 		for (int slotIndex = 0; slotIndex < renderSlots.size(); ++slotIndex)
@@ -662,7 +712,7 @@ public class DuplicatePrayersPlugin extends Plugin
 				{
 					original.setAction(HIDE_OP, null);
 				}
-				original.setAction(DUPLICATE_OP, canDuplicate ? DUPLICATE : null);
+				original.setAction(DUPLICATE_OP, DUPLICATE);
 				original.setClickMask(original.getClickMask() | DRAG | DRAG_ON);
 				original.setPos(widgetX, widgetY);
 				original.revalidate();
