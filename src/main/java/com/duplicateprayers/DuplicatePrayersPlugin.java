@@ -19,6 +19,7 @@ import net.runelite.api.GameState;
 import net.runelite.api.ItemComposition;
 import net.runelite.api.MenuAction;
 import net.runelite.api.ParamID;
+import net.runelite.api.Prayer;
 import net.runelite.api.ScriptID;
 import net.runelite.api.Skill;
 import net.runelite.api.events.MenuOptionClicked;
@@ -62,6 +63,8 @@ public class DuplicatePrayersPlugin extends Plugin
 	private static final String PRAYER_CONFIG_GROUP = "prayer";
 	private static final String DUPLICATE = "Duplicate";
 	private static final String REMOVE_DUPLICATE = "Remove duplicate";
+	private static final String LOCK_REORDERING = "Disable prayer reordering";
+	private static final String UNLOCK_REORDERING = "Enable prayer reordering";
 
 	@Inject
 	private Client client;
@@ -77,6 +80,7 @@ public class DuplicatePrayersPlugin extends Plugin
 
 	private final Map<Widget, Slot> duplicateWidgets = new HashMap<>();
 	private final Map<Widget, Widget> duplicateRoots = new HashMap<>();
+	private boolean prayerReordering;
 	private int lastPrayerPoints = -1;
 
 	@Override
@@ -159,6 +163,19 @@ public class DuplicatePrayersPlugin extends Plugin
 	public void onMenuOptionClicked(MenuOptionClicked event)
 	{
 		logPrayerClick(event);
+
+		if (UNLOCK_REORDERING.equals(event.getMenuOption()))
+		{
+			prayerReordering = true;
+			clientThread.invokeLater(this::rebuildPrayers);
+			return;
+		}
+		else if (LOCK_REORDERING.equals(event.getMenuOption()))
+		{
+			prayerReordering = false;
+			clientThread.invokeLater(this::rebuildPrayers);
+			return;
+		}
 
 		if (event.getMenuAction() != MenuAction.CC_OP || !DUPLICATE.equals(event.getMenuOption()))
 		{
@@ -486,7 +503,11 @@ public class DuplicatePrayersPlugin extends Plugin
 		int prayerbook = client.getVarbitValue(VarbitID.PRAYERBOOK);
 		EnumComposition prayerBookEnum = getPrayerBookEnum(prayerbook);
 		List<Slot> slots = getPrayerSlots(prayerbook);
-		boolean prayerReordering = isPrayerReorderingUnlocked(prayerBookEnum);
+		if (!prayerReordering)
+		{
+			clearPrayerReorderActions(prayerBookEnum);
+		}
+
 		List<Slot> swappedSlots = applyConfiguredHiddenSwaps(prayerbook, prayerBookEnum, slots);
 		List<Slot> renderSlots = prayerReordering && config.prioritizeOriginalPrayersWhenReordering()
 			? prioritizeOriginalPrayerSlots(swappedSlots)
@@ -540,6 +561,10 @@ public class DuplicatePrayersPlugin extends Plugin
 						original.getChild(1).setOpacity(200);
 					}
 				}
+				else
+				{
+					original.setAction(HIDE_OP, null);
+				}
 				original.setAction(DUPLICATE_OP, canDuplicate ? DUPLICATE : null);
 				original.setClickMask(original.getClickMask() | DRAG | DRAG_ON);
 				original.setPos(widgetX, widgetY);
@@ -557,7 +582,7 @@ public class DuplicatePrayersPlugin extends Plugin
 		return client.getWidget(prayerObj.getIntValue(ParamID.OC_PRAYER_COMPONENT));
 	}
 
-	private boolean isPrayerReorderingUnlocked(EnumComposition prayerBookEnum)
+	private void clearPrayerReorderActions(EnumComposition prayerBookEnum)
 	{
 		for (int prayerId : prayerBookEnum.getKeys())
 		{
@@ -567,15 +592,8 @@ public class DuplicatePrayersPlugin extends Plugin
 				continue;
 			}
 
-			String[] actions = prayerWidget.getActions();
-			if (actions != null && actions.length > HIDE_OP
-				&& ("Hide".equals(actions[HIDE_OP]) || "Unhide".equals(actions[HIDE_OP])))
-			{
-				return true;
-			}
+			prayerWidget.setAction(HIDE_OP, null);
 		}
-
-		return false;
 	}
 
 	private List<Slot> applyConfiguredHiddenSwaps(int prayerbook, EnumComposition prayerBookEnum, List<Slot> slots)
@@ -714,6 +732,7 @@ public class DuplicatePrayersPlugin extends Plugin
 	private String normalizePrayerName(String name)
 	{
 		return name.replaceAll("<[^>]*>", "")
+			.replaceAll("[^A-Za-z0-9]+", " ")
 			.trim()
 			.toLowerCase();
 	}
@@ -755,7 +774,7 @@ public class DuplicatePrayersPlugin extends Plugin
 		duplicate.setSize(original.getWidth(), original.getHeight(), WidgetSizeMode.ABSOLUTE, WidgetSizeMode.ABSOLUTE);
 		duplicate.setPos(x, y, WidgetPositionMode.ABSOLUTE_LEFT, WidgetPositionMode.ABSOLUTE_TOP);
 		duplicate.setClickMask(original.getClickMask() | DRAG | DRAG_ON);
-		duplicate.setAction(0, getPrimaryAction(original));
+		duplicate.setAction(0, getPrimaryAction(original, slot.getPrayerId()));
 		duplicate.setAction(DUPLICATE_OP, canDuplicate ? DUPLICATE : null);
 		duplicate.setAction(REMOVE_DUPLICATE_OP, REMOVE_DUPLICATE);
 		duplicate.setHasListener(true);
@@ -767,7 +786,7 @@ public class DuplicatePrayersPlugin extends Plugin
 
 			if (op == ACTIVATE_OP)
 			{
-				activateOriginalPrayer(original);
+				activateOriginalPrayer(original, slot.getPrayerId());
 			}
 			else if (op == DUPLICATE_OP + 1)
 			{
@@ -780,6 +799,7 @@ public class DuplicatePrayersPlugin extends Plugin
 		});
 
 		copyChildren(original, duplicate);
+		syncDuplicateActiveState(duplicate, slot.getPrayerId());
 		duplicate.revalidate();
 		return duplicate;
 	}
@@ -807,15 +827,68 @@ public class DuplicatePrayersPlugin extends Plugin
 		return duplicateRoot;
 	}
 
-	private String getPrimaryAction(Widget original)
+	private void syncDuplicateActiveState(Widget duplicate, int prayerId)
 	{
+		Prayer prayer = getPrayer(prayerId);
+		if (prayer == null)
+		{
+			return;
+		}
+
+		boolean active = client.isPrayerActive(prayer);
+		Widget activeBackground = duplicate.getChild(0);
+		if (activeBackground != null)
+		{
+			activeBackground.setHidden(!active);
+			activeBackground.revalidate();
+		}
+
+		duplicate.setAction(0, active ? "Deactivate" : "Activate");
+	}
+
+	private Prayer getPrayer(int prayerId)
+	{
+		int prayerbook = client.getVarbitValue(VarbitID.PRAYERBOOK);
+		EnumComposition prayerBookEnum = getPrayerBookEnum(prayerbook);
+		int prayerObjId = prayerBookEnum.getIntValue(prayerId);
+		if (prayerObjId == -1)
+		{
+			return null;
+		}
+
+		String prayerName = normalizePrayerName(client.getItemDefinition(prayerObjId).getName());
+		for (Prayer prayer : Prayer.values())
+		{
+			String enumName = normalizePrayerName(prayer.name().replace('_', ' '));
+			if (enumName.equals(prayerName))
+			{
+				return prayer;
+			}
+
+			if (enumName.startsWith("rp ") && enumName.substring(3).equals(prayerName))
+			{
+				return prayer;
+			}
+		}
+
+		return null;
+	}
+
+	private String getPrimaryAction(Widget original, int prayerId)
+	{
+		Prayer prayer = getPrayer(prayerId);
+		if (prayer != null)
+		{
+			return client.isPrayerActive(prayer) ? "Deactivate" : "Activate";
+		}
+
 		String[] actions = original.getActions();
 		return actions != null && actions.length > 0 && actions[0] != null ? actions[0] : "Activate";
 	}
 
-	private void activateOriginalPrayer(Widget original)
+	private void activateOriginalPrayer(Widget original, int prayerId)
 	{
-		String option = getPrimaryAction(original);
+		String option = getPrimaryAction(original, prayerId);
 		String target = original.getName();
 		int param0 = -1;
 		int param1 = original.getId();
