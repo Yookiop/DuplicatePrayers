@@ -820,6 +820,8 @@ public class DuplicatePrayersPlugin extends Plugin
 						hiddenWidget.setPos(x, y);
 						hiddenWidget.setAction(0, null);
 						hiddenWidget.setAction(DUPLICATE_OP, null);
+						hiddenWidget.setClickMask(hiddenWidget.getClickMask() & ~(DRAG | DRAG_ON));
+						hiddenWidget.setHasListener(false);
 						hiddenWidget.revalidate();
 					}
 					else
@@ -955,9 +957,65 @@ public class DuplicatePrayersPlugin extends Plugin
 		});
 
 		copyChildren(original, duplicate);
+		configureDuplicateWidgetTree(duplicate, slot, clickMask);
 		syncDuplicateActiveState(duplicate, slot);
 		duplicate.revalidate();
 		return duplicate;
+	}
+
+	private void configureDuplicateWidgetTree(Widget widget, Slot slot, int clickMask)
+	{
+		widget.setClickMask(clickMask);
+		widget.setHasListener(true);
+		widget.setAction(0, getPrimaryActionForSlot(slot));
+		widget.setAction(DUPLICATE_OP, prayerReordering ? DUPLICATE : null);
+		widget.setAction(REMOVE_DUPLICATE_OP, REMOVE_DUPLICATE);
+		widget.setOnOpListener((JavaScriptCallback) event ->
+		{
+			int prayerbook = client.getVarbitValue(VarbitID.PRAYERBOOK);
+			int op = event.getOp();
+			if (op == ACTIVATE_OP)
+			{
+				EnumComposition prayerBookEnum = getPrayerBookEnum(prayerbook);
+				Widget original = getPrayerWidget(prayerBookEnum, slot.getPrayerId());
+				if (original != null)
+				{
+					activateOriginalPrayer(original, slot.getPrayerId());
+				}
+			}
+			else if (op == DUPLICATE_OP + 1)
+			{
+				duplicatePrayer(prayerbook, slot.getPrayerId());
+			}
+			else if (op == REMOVE_DUPLICATE_OP + 1)
+			{
+				removeDuplicate(prayerbook, slot);
+			}
+		});
+
+		Widget[] dynamicChildren = widget.getDynamicChildren();
+		if (dynamicChildren != null)
+		{
+			for (Widget child : dynamicChildren)
+			{
+				if (child != null)
+				{
+					configureDuplicateWidgetTree(child, slot, clickMask);
+				}
+			}
+		}
+
+		Widget[] staticChildren = widget.getStaticChildren();
+		if (staticChildren != null)
+		{
+			for (Widget child : staticChildren)
+			{
+				if (child != null)
+				{
+					configureDuplicateWidgetTree(child, slot, clickMask);
+				}
+			}
+		}
 	}
 
 	private void registerDuplicateWidgetTree(Widget widget, Slot slot)
@@ -1082,6 +1140,14 @@ public class DuplicatePrayersPlugin extends Plugin
 	{
 		String[] actions = original.getActions();
 		return actions != null && actions.length > 0 && actions[0] != null ? actions[0] : "Activate";
+	}
+
+	private String getPrimaryActionForSlot(Slot slot)
+	{
+		int prayerbook = client.getVarbitValue(VarbitID.PRAYERBOOK);
+		EnumComposition prayerBookEnum = getPrayerBookEnum(prayerbook);
+		Widget original = getPrayerWidget(prayerBookEnum, slot.getPrayerId());
+		return original == null ? "Activate" : getPrimaryAction(original, slot.getPrayerId());
 	}
 
 	private void activateOriginalPrayer(Widget original, int prayerId)
