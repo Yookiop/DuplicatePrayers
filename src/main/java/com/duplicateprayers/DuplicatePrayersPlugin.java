@@ -334,17 +334,20 @@ public class DuplicatePrayersPlugin extends Plugin
 			return;
 		}
 
+		int prayerbook = client.getVarbitValue(VarbitID.PRAYERBOOK);
+		Slot draggedDuplicateSlot = findDuplicateSlotForWidget(draggedWidget);
+		Slot draggedOnDuplicateSlot = findDuplicateSlotForWidget(draggedOnWidget);
 		int draggedGroupId = WidgetUtil.componentToInterface(draggedWidget.getId());
 		int draggedOnGroupId = WidgetUtil.componentToInterface(draggedOnWidget.getId());
-		if (draggedGroupId != InterfaceID.PRAYERBOOK || draggedOnGroupId != InterfaceID.PRAYERBOOK)
+		if ((draggedDuplicateSlot == null && draggedGroupId != InterfaceID.PRAYERBOOK)
+				|| (draggedOnDuplicateSlot == null && draggedOnGroupId != InterfaceID.PRAYERBOOK))
 		{
 			return;
 		}
 
-		int prayerbook = client.getVarbitValue(VarbitID.PRAYERBOOK);
 		List<Slot> slots = getPrayerSlots(prayerbook);
-		Slot fromSlot = findSlotForWidget(prayerbook, draggedWidget);
-		Slot toSlot = findSlotForWidget(prayerbook, draggedOnWidget);
+		Slot fromSlot = draggedDuplicateSlot != null ? draggedDuplicateSlot : findSlotForWidget(prayerbook, draggedWidget);
+		Slot toSlot = draggedOnDuplicateSlot != null ? draggedOnDuplicateSlot : findSlotForWidget(prayerbook, draggedOnWidget);
 		if (fromSlot == null || toSlot == null || !fromSlot.isDuplicate())
 		{
 			return;
@@ -454,25 +457,30 @@ public class DuplicatePrayersPlugin extends Plugin
 	}
 
 	private List<Slot> normalizePrayerSlots(int prayerbook, EnumComposition prayerEnum, List<Slot> slots) {
-		List<Slot> duplicates = slots.stream()
-				.filter(slot -> slot.isDuplicate() && containsPrayerKey(prayerEnum, slot.getPrayerId()))
-				.collect(Collectors.toCollection(ArrayList::new));
 		List<Slot> normalized = new ArrayList<>();
-		int duplicateIndex = 0;
+		int[] prayerOrder = getPrayerOrder(prayerbook, prayerEnum);
+		int prayerIndex = 0;
 
-		for (int prayerId : getPrayerOrder(prayerbook, prayerEnum))
+		for (Slot slot : slots)
 		{
-			if (isHidden(prayerbook, prayerId) && duplicateIndex < duplicates.size())
+			if (slot.isDuplicate())
 			{
-				normalized.add(duplicates.get(duplicateIndex++));
+				if (containsPrayerKey(prayerEnum, slot.getPrayerId()))
+				{
+					normalized.add(slot);
+				}
+				continue;
 			}
 
-			normalized.add(new Slot(prayerId, false, 0));
+			if (prayerIndex < prayerOrder.length)
+			{
+				normalized.add(new Slot(prayerOrder[prayerIndex++], false, 0));
+			}
 		}
 
-		while (duplicateIndex < duplicates.size())
+		while (prayerIndex < prayerOrder.length)
 		{
-			normalized.add(duplicates.get(duplicateIndex++));
+			normalized.add(new Slot(prayerOrder[prayerIndex++], false, 0));
 		}
 
 		normalized = trimOverflowDuplicates(prayerbook, normalized);
@@ -706,7 +714,7 @@ public class DuplicatePrayersPlugin extends Plugin
 
 	private Slot findSlotForWidget(int prayerbook, Widget widget)
 	{
-		Slot duplicateSlot = duplicateWidgets.get(widget);
+		Slot duplicateSlot = findDuplicateSlotForWidget(widget);
 		if (duplicateSlot != null)
 		{
 			return duplicateSlot;
@@ -714,6 +722,23 @@ public class DuplicatePrayersPlugin extends Plugin
 
 		int prayerId = findPrayerIdFromComponent(prayerbook, widget);
 		return prayerId == -1 ? null : new Slot(prayerId, false, 0);
+	}
+
+	private Slot findDuplicateSlotForWidget(Widget widget)
+	{
+		Widget current = widget;
+		while (current != null)
+		{
+			Slot duplicateSlot = duplicateWidgets.get(current);
+			if (duplicateSlot != null)
+			{
+				return duplicateSlot;
+			}
+
+			current = current.getParent();
+		}
+
+		return null;
 	}
 
 	private void redrawPrayers()
@@ -763,6 +788,7 @@ public class DuplicatePrayersPlugin extends Plugin
 		int hiddenSlotsCoveredByDuplicates = countDuplicates(slots);
 
 		Set<Integer> renderedOriginals = new HashSet<>();
+		List<DuplicateRender> duplicateRenders = new ArrayList<>();
 		int index = 0;
 
 		for (Slot slot : slots)
@@ -826,14 +852,7 @@ public class DuplicatePrayersPlugin extends Plugin
 
 			if (slot.isDuplicate())
 			{
-				// 'original' is de gedeelde widget voor deze prayer. Voor een
-				// duplicaat-slot mag de positie/opacity van die gedeelde widget
-				// NIET worden aangepast - dat zou de positie van de echte
-				// originele slot van deze prayer overschrijven en twee andere
-				// prayers op elkaar laten landen. Alleen de nieuwe duplicate-widget
-				// krijgt deze (x, y).
-				Widget duplicate = createDuplicateWidget(original, slot, x, y, true);
-				if (duplicate != null) duplicateWidgets.put(duplicate, slot);
+				duplicateRenders.add(new DuplicateRender(original, slot, x, y));
 			}
 			else
 			{
@@ -850,6 +869,16 @@ public class DuplicatePrayersPlugin extends Plugin
 				original.revalidate();
 			}
 			index++;
+		}
+
+		for (DuplicateRender duplicateRender : duplicateRenders)
+		{
+			Widget duplicate = createDuplicateWidget(duplicateRender.getOriginal(), duplicateRender.getSlot(),
+					duplicateRender.getX(), duplicateRender.getY(), true);
+			if (duplicate != null)
+			{
+				registerDuplicateWidgetTree(duplicate, duplicateRender.getSlot());
+			}
 		}
 	}
 
@@ -929,6 +958,35 @@ public class DuplicatePrayersPlugin extends Plugin
 		syncDuplicateActiveState(duplicate, slot);
 		duplicate.revalidate();
 		return duplicate;
+	}
+
+	private void registerDuplicateWidgetTree(Widget widget, Slot slot)
+	{
+		duplicateWidgets.put(widget, slot);
+
+		Widget[] dynamicChildren = widget.getDynamicChildren();
+		if (dynamicChildren != null)
+		{
+			for (Widget child : dynamicChildren)
+			{
+				if (child != null)
+				{
+					registerDuplicateWidgetTree(child, slot);
+				}
+			}
+		}
+
+		Widget[] staticChildren = widget.getStaticChildren();
+		if (staticChildren != null)
+		{
+			for (Widget child : staticChildren)
+			{
+				if (child != null)
+				{
+					registerDuplicateWidgetTree(child, slot);
+				}
+			}
+		}
 	}
 
 	private Widget getDuplicateRoot(Widget original)
@@ -1205,6 +1263,15 @@ public class DuplicatePrayersPlugin extends Plugin
 	DuplicatePrayersConfig provideConfig(ConfigManager configManager)
 	{
 		return configManager.getConfig(DuplicatePrayersConfig.class);
+	}
+
+	@Value
+	private static class DuplicateRender
+	{
+		Widget original;
+		Slot slot;
+		int x;
+		int y;
 	}
 
 	@Value
