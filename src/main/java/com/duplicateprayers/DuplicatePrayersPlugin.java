@@ -376,8 +376,13 @@ public class DuplicatePrayersPlugin extends Plugin
 
 		int sourceIdx = ArrayUtils.indexOf(slots.stream().mapToInt(Slot::getPrayerId).toArray(), prayerId);
 		Slot duplicate = new Slot(prayerId, true, nextDuplicateId(slots));
+		int hiddenSlotIdx = findNextDuplicateSlotIndex(prayerbook, slots);
 
-		if (sourceIdx == -1 || sourceIdx + 1 >= slots.size())
+		if (hiddenSlotIdx != -1)
+		{
+			slots.add(hiddenSlotIdx, duplicate);
+		}
+		else if (sourceIdx == -1 || sourceIdx + 1 >= slots.size())
 		{
 			slots.add(duplicate);
 		}
@@ -388,6 +393,29 @@ public class DuplicatePrayersPlugin extends Plugin
 
 		setPrayerSlots(prayerbook, slots);
 		rebuildPrayers();
+	}
+
+	private int findNextDuplicateSlotIndex(int prayerbook, List<Slot> slots)
+	{
+		int duplicateCount = countDuplicates(slots);
+		int hiddenCount = 0;
+
+		for (int i = 0; i < slots.size(); ++i)
+		{
+			if (!isHiddenSlot(prayerbook, slots.get(i)))
+			{
+				continue;
+			}
+
+			if (hiddenCount == duplicateCount)
+			{
+				return i;
+			}
+
+			++hiddenCount;
+		}
+
+		return -1;
 	}
 
 	private int nextDuplicateId(List<Slot> slots)
@@ -697,14 +725,52 @@ public class DuplicatePrayersPlugin extends Plugin
 		EnumComposition prayerBookEnum = getPrayerBookEnum(prayerbook);
 
 		List<Slot> slots = getPrayerSlots(prayerbook);
-
-		List<Slot> renderSlots = getRenderableSlots(prayerbook, slots);
+		int hiddenSlotsCoveredByDuplicates = countDuplicates(slots);
 
 		Set<Integer> renderedOriginals = new HashSet<>();
 		int index = 0;
 
-		for (Slot slot : renderSlots)
+		for (Slot slot : slots)
 		{
+			boolean hidden = isHiddenSlot(prayerbook, slot);
+			if (hidden)
+			{
+				if (hiddenSlotsCoveredByDuplicates > 0)
+				{
+					--hiddenSlotsCoveredByDuplicates;
+					continue;
+				}
+
+				if (index >= MAX_VISIBLE_PRAYERS)
+				{
+					break;
+				}
+
+				Widget hiddenWidget = getPrayerWidget(prayerBookEnum, slot.getPrayerId());
+				if (hiddenWidget != null)
+				{
+					if (prayerReordering)
+					{
+						int x = (index % PRAYER_COLUMN_COUNT) * PRAYER_X_OFFSET;
+						int y = (index / PRAYER_COLUMN_COUNT) * PRAYER_Y_OFFSET;
+
+						hiddenWidget.setHidden(false);
+						hiddenWidget.setOpacity(150);
+						hiddenWidget.setPos(x, y);
+						hiddenWidget.setAction(0, null);
+						hiddenWidget.setAction(DUPLICATE_OP, null);
+						hiddenWidget.revalidate();
+					}
+					else
+					{
+						hiddenWidget.setHidden(true);
+					}
+				}
+
+				++index;
+				continue;
+			}
+
 			// Originele prayer check
 			if (!slot.isDuplicate())
 			{
@@ -722,8 +788,6 @@ public class DuplicatePrayersPlugin extends Plugin
 
 			int x = (index % PRAYER_COLUMN_COUNT) * PRAYER_X_OFFSET;
 			int y = (index / PRAYER_COLUMN_COUNT) * PRAYER_Y_OFFSET;
-
-			boolean hidden = isHiddenSlot(prayerbook, slot);
 
 			if (slot.isDuplicate())
 			{
@@ -752,59 +816,6 @@ public class DuplicatePrayersPlugin extends Plugin
 			}
 			index++;
 		}
-	}
-
-	private List<Slot> getRenderableSlots(int prayerbook, List<Slot> slots)
-	{
-		List<Slot> renderSlots = new ArrayList<>();
-		List<Slot> hiddenSlots = new ArrayList<>();
-		int originalsRemaining = countVisibleOriginals(prayerbook, slots);
-		int visible = 0;
-
-		for (Slot slot : slots)
-		{
-			if (isHiddenSlot(prayerbook, slot))
-			{
-				if (prayerReordering)
-				{
-					hiddenSlots.add(slot);
-				}
-				continue;
-			}
-
-			if (visible >= MAX_VISIBLE_PRAYERS || renderSlots.size() >= MAX_VISIBLE_PRAYERS)
-			{
-				continue;
-			}
-
-			if (slot.isDuplicate() && originalsRemaining >= MAX_VISIBLE_PRAYERS - visible)
-			{
-				continue;
-			}
-
-			renderSlots.add(slot);
-			++visible;
-
-			if (!slot.isDuplicate())
-			{
-				--originalsRemaining;
-			}
-		}
-
-		if (prayerReordering)
-		{
-			for (Slot hiddenSlot : hiddenSlots)
-			{
-				if (renderSlots.size() >= MAX_VISIBLE_PRAYERS)
-				{
-					break;
-				}
-
-				renderSlots.add(hiddenSlot);
-			}
-		}
-
-		return renderSlots;
 	}
 
 	private Widget getPrayerWidget(EnumComposition prayerBookEnum, int prayerId)
@@ -1135,6 +1146,19 @@ public class DuplicatePrayersPlugin extends Plugin
 		for (Slot slot : slots)
 		{
 			if (!slot.isDuplicate() && !isHidden(prayerbook, slot.getPrayerId()))
+			{
+				++count;
+			}
+		}
+		return count;
+	}
+
+	private int countDuplicates(List<Slot> slots)
+	{
+		int count = 0;
+		for (Slot slot : slots)
+		{
+			if (slot.isDuplicate())
 			{
 				++count;
 			}
