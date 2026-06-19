@@ -46,7 +46,6 @@ import net.runelite.client.menus.MenuManager;
 import net.runelite.client.menus.WidgetMenuOption;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
-import org.apache.commons.lang3.ArrayUtils;
 
 @Slf4j
 @PluginDescriptor(
@@ -346,7 +345,7 @@ public class DuplicatePrayersPlugin extends Plugin
 		List<Slot> slots = getPrayerSlots(prayerbook);
 		Slot fromSlot = findSlotForWidget(prayerbook, draggedWidget);
 		Slot toSlot = findSlotForWidget(prayerbook, draggedOnWidget);
-		if (fromSlot == null || toSlot == null)
+		if (fromSlot == null || toSlot == null || !fromSlot.isDuplicate())
 		{
 			return;
 		}
@@ -374,7 +373,6 @@ public class DuplicatePrayersPlugin extends Plugin
 			return;
 		}
 
-		int sourceIdx = ArrayUtils.indexOf(slots.stream().mapToInt(Slot::getPrayerId).toArray(), prayerId);
 		Slot duplicate = new Slot(prayerId, true, nextDuplicateId(slots));
 		int hiddenSlotIdx = findNextDuplicateSlotIndex(prayerbook, slots);
 
@@ -382,13 +380,9 @@ public class DuplicatePrayersPlugin extends Plugin
 		{
 			slots.add(hiddenSlotIdx, duplicate);
 		}
-		else if (sourceIdx == -1 || sourceIdx + 1 >= slots.size())
-		{
-			slots.add(duplicate);
-		}
 		else
 		{
-			slots.add(sourceIdx + 1, duplicate);
+			slots.add(duplicate);
 		}
 
 		setPrayerSlots(prayerbook, slots);
@@ -452,36 +446,33 @@ public class DuplicatePrayersPlugin extends Plugin
 
 	private List<Slot> defaultPrayerSlots(EnumComposition prayerEnum)
 	{
-		return Arrays.stream(prayerEnum.getKeys())
+		int prayerbook = client.getVarbitValue(VarbitID.PRAYERBOOK);
+		return Arrays.stream(getPrayerOrder(prayerbook, prayerEnum))
 				.boxed()
-				.sorted(Comparator.comparing(id ->
-				{
-					int prayerObjId = prayerEnum.getIntValue(id);
-					ItemComposition prayerObj = client.getItemDefinition(prayerObjId);
-					return prayerObj.getIntValue(ParamID.OC_PRAYER_LEVEL);
-				}))
 				.map(id -> new Slot(id, false, 0))
 				.collect(Collectors.toCollection(ArrayList::new));
 	}
 
 	private List<Slot> normalizePrayerSlots(int prayerbook, EnumComposition prayerEnum, List<Slot> slots) {
-		Set<Integer> seen = new HashSet<>();
+		List<Slot> duplicates = slots.stream()
+				.filter(slot -> slot.isDuplicate() && containsPrayerKey(prayerEnum, slot.getPrayerId()))
+				.collect(Collectors.toCollection(ArrayList::new));
 		List<Slot> normalized = new ArrayList<>();
+		int duplicateIndex = 0;
 
-		for (Slot slot : slots) {
-			// Als het een duplicaat is, voegen we hem altijd toe.
-			// Als het een originele prayer is, voegen we hem alleen toe als we hem nog niet gezien hebben.
-			if (slot.isDuplicate() || seen.add(slot.getPrayerId())) {
-				normalized.add(slot);
+		for (int prayerId : getPrayerOrder(prayerbook, prayerEnum))
+		{
+			if (isHidden(prayerbook, prayerId) && duplicateIndex < duplicates.size())
+			{
+				normalized.add(duplicates.get(duplicateIndex++));
 			}
+
+			normalized.add(new Slot(prayerId, false, 0));
 		}
 
-		// Controleer of er nog originele prayers uit de 'defaultPrayerSlots' missen
-		for (Slot defaultSlot : defaultPrayerSlots(prayerEnum)) {
-			if (!seen.contains(defaultSlot.getPrayerId())) {
-				normalized.add(defaultSlot);
-				seen.add(defaultSlot.getPrayerId());
-			}
+		while (duplicateIndex < duplicates.size())
+		{
+			normalized.add(duplicates.get(duplicateIndex++));
 		}
 
 		normalized = trimOverflowDuplicates(prayerbook, normalized);
@@ -491,6 +482,50 @@ public class DuplicatePrayersPlugin extends Plugin
 		}
 
 		return normalized;
+	}
+
+	private int[] getPrayerOrder(int prayerbook, EnumComposition prayerEnum)
+	{
+		int[] defaultOrder = defaultPrayerOrder(prayerEnum);
+		String config = configManager.getConfiguration(PRAYER_CONFIG_GROUP, "prayer_order_book_" + prayerbook);
+		if (config != null && !config.isBlank())
+		{
+			int[] configuredOrder = Arrays.stream(config.split(","))
+					.mapToInt(Integer::parseInt)
+					.filter(prayerId -> containsPrayerKey(prayerEnum, prayerId))
+					.toArray();
+
+			List<Integer> order = Arrays.stream(configuredOrder)
+					.boxed()
+					.collect(Collectors.toCollection(ArrayList::new));
+			for (int prayerId : defaultOrder)
+			{
+				if (!order.contains(prayerId))
+				{
+					order.add(prayerId);
+				}
+			}
+
+			return order.stream()
+					.mapToInt(i -> i)
+					.toArray();
+		}
+
+		return defaultOrder;
+	}
+
+	private int[] defaultPrayerOrder(EnumComposition prayerEnum)
+	{
+		return Arrays.stream(prayerEnum.getKeys())
+				.boxed()
+				.sorted(Comparator.comparing(id ->
+				{
+					int prayerObjId = prayerEnum.getIntValue(id);
+					ItemComposition prayerObj = client.getItemDefinition(prayerObjId);
+					return prayerObj.getIntValue(ParamID.OC_PRAYER_LEVEL);
+				}))
+				.mapToInt(i -> i)
+				.toArray();
 	}
 
 	private List<Slot> trimOverflowDuplicates(int prayerbook, List<Slot> slots)
