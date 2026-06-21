@@ -379,33 +379,23 @@ public class DuplicatePrayersPlugin extends Plugin
 			return;
 		}
 
-		int duplicateIdx = linkedDuplicateIndexForDraggedSlot(prayerbook, slots, fromIdx);
+		int sourceIdx = linkedPairTargetIndex(prayerbook, slots, fromIdx);
 		int targetIdx = linkedPairTargetIndex(prayerbook, slots, toIdx);
-		if (duplicateIdx == -1 || targetIdx == -1)
+		if (sourceIdx == -1 || targetIdx == -1)
 		{
 			return;
 		}
 
 		client.setDraggedOnWidget(null);
-		if (!swapLinkedDuplicatePair(prayerbook, slots, duplicateIdx, targetIdx))
+		if (!swapSlotUnits(prayerbook, slots, sourceIdx, targetIdx))
 		{
 			rebuildPrayers();
 			return;
 		}
 
 		setPrayerSlots(prayerbook, slots);
+		setPrayerOrderFromSlots(prayerbook, slots);
 		rebuildPrayers();
-	}
-
-	private int linkedDuplicateIndexForDraggedSlot(int prayerbook, List<Slot> slots, int slotIdx)
-	{
-		Slot slot = slots.get(slotIdx);
-		if (slot.isDuplicate())
-		{
-			return findLinkedHiddenSlotIndex(prayerbook, slots, slotIdx) == -1 ? -1 : slotIdx;
-		}
-
-		return isLinkedHiddenSlot(prayerbook, slots, slotIdx) ? slotIdx - 1 : -1;
 	}
 
 	private int linkedPairTargetIndex(int prayerbook, List<Slot> slots, int slotIdx)
@@ -478,46 +468,39 @@ public class DuplicatePrayersPlugin extends Plugin
 		return bounds != null && bounds.contains(mouse.getX(), mouse.getY());
 	}
 
-	private boolean swapLinkedDuplicatePair(int prayerbook, List<Slot> slots, int duplicateIdx, int targetIdx)
+	private boolean swapSlotUnits(int prayerbook, List<Slot> slots, int sourceIdx, int targetIdx)
 	{
-		Slot duplicateSlot = slots.get(duplicateIdx);
-		if (!duplicateSlot.isDuplicate())
+		if (sourceIdx == targetIdx)
 		{
 			return false;
 		}
 
-		int hiddenIdx = findLinkedHiddenSlotIndex(prayerbook, slots, duplicateIdx);
-		if (hiddenIdx == -1 || targetIdx == duplicateIdx || targetIdx == hiddenIdx)
-		{
-			return false;
-		}
-
-		int duplicateUnitEnd = hiddenIdx + 1;
+		int sourceUnitEnd = sourceIdx + targetSlotLength(prayerbook, slots, sourceIdx);
 		int targetUnitEnd = targetIdx + targetSlotLength(prayerbook, slots, targetIdx);
-		if (duplicateIdx < targetUnitEnd && targetIdx < duplicateUnitEnd)
+		if (sourceIdx < targetUnitEnd && targetIdx < sourceUnitEnd)
 		{
 			return false;
 		}
 
-		List<Slot> duplicateUnit = new ArrayList<>(slots.subList(duplicateIdx, duplicateUnitEnd));
+		List<Slot> sourceUnit = new ArrayList<>(slots.subList(sourceIdx, sourceUnitEnd));
 		List<Slot> targetUnit = new ArrayList<>(slots.subList(targetIdx, targetUnitEnd));
 		List<Slot> swapped = new ArrayList<>(slots.size());
 
-		if (duplicateIdx < targetIdx)
+		if (sourceIdx < targetIdx)
 		{
-			swapped.addAll(slots.subList(0, duplicateIdx));
+			swapped.addAll(slots.subList(0, sourceIdx));
 			swapped.addAll(targetUnit);
-			swapped.addAll(slots.subList(duplicateUnitEnd, targetIdx));
-			swapped.addAll(duplicateUnit);
+			swapped.addAll(slots.subList(sourceUnitEnd, targetIdx));
+			swapped.addAll(sourceUnit);
 			swapped.addAll(slots.subList(targetUnitEnd, slots.size()));
 		}
 		else
 		{
 			swapped.addAll(slots.subList(0, targetIdx));
-			swapped.addAll(duplicateUnit);
-			swapped.addAll(slots.subList(targetUnitEnd, duplicateIdx));
+			swapped.addAll(sourceUnit);
+			swapped.addAll(slots.subList(targetUnitEnd, sourceIdx));
 			swapped.addAll(targetUnit);
-			swapped.addAll(slots.subList(duplicateUnitEnd, slots.size()));
+			swapped.addAll(slots.subList(sourceUnitEnd, slots.size()));
 		}
 
 		slots.clear();
@@ -529,6 +512,15 @@ public class DuplicatePrayersPlugin extends Plugin
 	{
 		Slot targetSlot = slots.get(targetIdx);
 		return targetSlot.isDuplicate() && findLinkedHiddenSlotIndex(prayerbook, slots, targetIdx) != -1 ? 2 : 1;
+	}
+
+	private void setPrayerOrderFromSlots(int prayerbook, List<Slot> slots)
+	{
+		String order = slots.stream()
+				.filter(slot -> !slot.isDuplicate())
+				.map(slot -> Integer.toString(slot.getPrayerId()))
+				.collect(Collectors.joining(","));
+		configManager.setConfiguration(PRAYER_CONFIG_GROUP, "prayer_order_book_" + prayerbook, order);
 	}
 
 	private void duplicatePrayer(int prayerbook, int prayerId)
@@ -1049,17 +1041,18 @@ public class DuplicatePrayersPlugin extends Plugin
 				Widget hiddenWidget = getPrayerWidget(prayerBookEnum, slot.getPrayerId());
 				if (hiddenWidget != null)
 				{
-					if (prayerReordering && !coveredByLinkedDuplicate)
+					if (prayerReordering)
 					{
-						int x = (index % PRAYER_COLUMN_COUNT) * PRAYER_X_OFFSET;
-						int y = (index / PRAYER_COLUMN_COUNT) * PRAYER_Y_OFFSET;
+						int hiddenIndex = coveredByLinkedDuplicate ? Math.max(0, index - 1) : index;
+						int x = (hiddenIndex % PRAYER_COLUMN_COUNT) * PRAYER_X_OFFSET;
+						int y = (hiddenIndex / PRAYER_COLUMN_COUNT) * PRAYER_Y_OFFSET;
 
 						hiddenWidget.setHidden(false);
 						hiddenWidget.setOpacity(150);
 						hiddenWidget.setPos(x, y);
 						hiddenWidget.setAction(0, null);
 						hiddenWidget.setAction(DUPLICATE_OP, null);
-						hiddenWidget.setClickMask((hiddenWidget.getClickMask() & ~DRAG) | DRAG_ON);
+						hiddenWidget.setClickMask(coveredByLinkedDuplicate ? 0 : (hiddenWidget.getClickMask() & ~DRAG) | DRAG_ON);
 						hiddenWidget.setHasListener(true);
 						hiddenWidget.revalidate();
 					}
