@@ -352,7 +352,7 @@ public class DuplicatePrayersPlugin extends Plugin
 		List<Slot> slots = getPrayerSlots(prayerbook);
 		Slot fromSlot = draggedDuplicateSlot != null ? draggedDuplicateSlot : findSlotForWidget(prayerbook, draggedWidget);
 		Slot toSlot = draggedOnDuplicateSlot != null ? draggedOnDuplicateSlot : findSlotForWidget(prayerbook, draggedOnWidget);
-		if (fromSlot == null || toSlot == null || !fromSlot.isDuplicate())
+		if (fromSlot == null || toSlot == null)
 		{
 			return;
 		}
@@ -364,14 +364,38 @@ public class DuplicatePrayersPlugin extends Plugin
 			return;
 		}
 
-		if (!moveLinkedDuplicatePair(prayerbook, slots, fromIdx, toIdx))
+		int duplicateIdx = linkedDuplicateIndexForDraggedSlot(prayerbook, slots, fromIdx);
+		int targetIdx = linkedPairTargetIndex(prayerbook, slots, toIdx);
+		if (duplicateIdx == -1 || targetIdx == -1)
 		{
 			return;
 		}
 
 		client.setDraggedOnWidget(null);
+		if (!moveLinkedDuplicatePair(prayerbook, slots, duplicateIdx, targetIdx))
+		{
+			rebuildPrayers();
+			return;
+		}
+
 		setPrayerSlots(prayerbook, slots);
 		rebuildPrayers();
+	}
+
+	private int linkedDuplicateIndexForDraggedSlot(int prayerbook, List<Slot> slots, int slotIdx)
+	{
+		Slot slot = slots.get(slotIdx);
+		if (slot.isDuplicate())
+		{
+			return findLinkedHiddenSlotIndex(prayerbook, slots, slotIdx) == -1 ? -1 : slotIdx;
+		}
+
+		return isLinkedHiddenSlot(prayerbook, slots, slotIdx) ? slotIdx - 1 : -1;
+	}
+
+	private int linkedPairTargetIndex(int prayerbook, List<Slot> slots, int slotIdx)
+	{
+		return isLinkedHiddenSlot(prayerbook, slots, slotIdx) ? slotIdx - 1 : slotIdx;
 	}
 
 	private boolean moveLinkedDuplicatePair(int prayerbook, List<Slot> slots, int duplicateIdx, int targetIdx)
