@@ -724,12 +724,12 @@ public class DuplicatePrayersPlugin extends Plugin
 			}
 
 			int linkedHiddenIdx = findLinkedHiddenSlotIndex(prayerbook, normalized, i);
-			int availableHiddenIdx = findAvailableHiddenSlotIndex(prayerbook, normalized);
-			if (linkedHiddenIdx != -1 && (availableHiddenIdx == -1 || availableHiddenIdx > i))
+			if (linkedHiddenIdx != -1)
 			{
 				continue;
 			}
 
+			int availableHiddenIdx = findAvailableHiddenSlotIndex(prayerbook, normalized);
 			if (availableHiddenIdx == -1)
 			{
 				normalized.remove(i--);
