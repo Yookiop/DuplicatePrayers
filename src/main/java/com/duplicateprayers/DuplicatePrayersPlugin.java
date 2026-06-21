@@ -80,7 +80,7 @@ public class DuplicatePrayersPlugin extends Plugin
 	private final Map<Widget, Slot> duplicateWidgets = new HashMap<>();
 	private final Map<Widget, Widget> duplicateRoots = new HashMap<>();
 	private boolean prayerReordering;
-	private boolean rebuildPending = false;
+	private boolean rebuildPending;
 
 	@Override
 	protected void startUp()
@@ -514,25 +514,6 @@ public class DuplicatePrayersPlugin extends Plugin
 		return findAvailableHiddenSlotIndex(prayerbook, slots) != -1;
 	}
 
-	private int findOriginalSlotIndex(List<Slot> slots, int prayerId)
-	{
-		for (int i = 0; i < slots.size(); ++i)
-		{
-			Slot slot = slots.get(i);
-			if (!slot.isDuplicate() && slot.getPrayerId() == prayerId)
-			{
-				return i;
-			}
-		}
-
-		return -1;
-	}
-
-	private boolean containsOriginalSlot(List<Slot> slots, int prayerId)
-	{
-		return findOriginalSlotIndex(slots, prayerId) != -1;
-	}
-
 	private int nextDuplicateId(List<Slot> slots)
 	{
 		return slots.stream()
@@ -574,7 +555,8 @@ public class DuplicatePrayersPlugin extends Plugin
 				.collect(Collectors.toCollection(ArrayList::new));
 	}
 
-	private List<Slot> normalizePrayerSlots(int prayerbook, EnumComposition prayerEnum, List<Slot> slots) {
+	private List<Slot> normalizePrayerSlots(int prayerbook, EnumComposition prayerEnum, List<Slot> slots)
+	{
 		List<Slot> normalized = new ArrayList<>();
 		Set<Integer> addedOriginals = new HashSet<>();
 		Set<Integer> addedDuplicates = new HashSet<>();
@@ -614,7 +596,8 @@ public class DuplicatePrayersPlugin extends Plugin
 		normalized = normalizeLinkedDuplicateSlots(prayerbook, normalized);
 		normalized = trimOverflowDuplicates(prayerbook, normalized);
 
-		if (!normalized.equals(slots)) {
+		if (!normalized.equals(slots))
+		{
 			setPrayerSlots(prayerbook, normalized);
 		}
 
@@ -996,7 +979,7 @@ public class DuplicatePrayersPlugin extends Plugin
 		for (DuplicateRender duplicateRender : duplicateRenders)
 		{
 			Widget duplicate = createDuplicateWidget(duplicateRender.getOriginal(), duplicateRender.getSlot(),
-					duplicateRender.getX(), duplicateRender.getY(), true);
+					duplicateRender.getX(), duplicateRender.getY());
 			if (duplicate != null)
 			{
 				registerDuplicateWidgetTree(duplicate, duplicateRender.getSlot());
@@ -1011,7 +994,7 @@ public class DuplicatePrayersPlugin extends Plugin
 		return client.getWidget(prayerObj.getIntValue(ParamID.OC_PRAYER_COMPONENT));
 	}
 
-	private Widget createDuplicateWidget(Widget original, Slot slot, int x, int y, boolean canDuplicate)
+	private Widget createDuplicateWidget(Widget original, Slot slot, int x, int y)
 	{
 		Widget duplicate = getDuplicateRoot(original).createChild(-1, WidgetType.LAYER);
 
