@@ -80,6 +80,7 @@ public class DuplicatePrayersPlugin extends Plugin
 	private final Map<Widget, Slot> duplicateWidgets = new HashMap<>();
 	private final Map<Widget, Widget> duplicateRoots = new HashMap<>();
 	private boolean prayerReordering;
+	private boolean rebuildPending = false;
 
 	@Override
 	protected void startUp()
@@ -146,6 +147,7 @@ public class DuplicatePrayersPlugin extends Plugin
 	{
 		if (event.getScriptId() == ScriptID.PRAYER_REDRAW)
 		{
+			rebuildPending = false;
 			if (isPrayerBookOpen())
 			{
 				rebuildPrayers();
@@ -156,7 +158,25 @@ public class DuplicatePrayersPlugin extends Plugin
 		{
 			if (prayerReordering && isPrayerBookOpen())
 			{
-				rebuildPrayers();
+				// PRAYER_UPDATEBUTTON fires once per prayer during a full rebuild (~30 times).
+				// Defer and deduplicate: if PRAYER_REDRAW follows in the same script, it
+				// cancels this pending rebuild and handles it directly.
+				if (!rebuildPending)
+				{
+					rebuildPending = true;
+					clientThread.invokeLater(() ->
+					{
+						if (!rebuildPending)
+						{
+							return;
+						}
+						rebuildPending = false;
+						if (isPrayerBookOpen())
+						{
+							rebuildPrayers();
+						}
+					});
+				}
 			}
 			else
 			{
