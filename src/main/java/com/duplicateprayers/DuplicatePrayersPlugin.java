@@ -22,9 +22,7 @@ import net.runelite.api.ItemComposition;
 import net.runelite.api.MenuAction;
 import net.runelite.api.ParamID;
 import net.runelite.api.Point;
-import net.runelite.api.Prayer;
 import net.runelite.api.ScriptID;
-import net.runelite.api.Skill;
 import net.runelite.api.events.MenuOptionClicked;
 import net.runelite.api.events.ScriptPostFired;
 import net.runelite.api.events.WidgetDrag;
@@ -42,10 +40,6 @@ import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ProfileChanged;
-import net.runelite.client.game.chatbox.ChatboxPanelManager;
-import net.runelite.client.game.chatbox.ChatboxTextMenuInput;
-import net.runelite.client.menus.MenuManager;
-import net.runelite.client.menus.WidgetMenuOption;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 
@@ -64,24 +58,12 @@ public class DuplicatePrayersPlugin extends Plugin
 	private static final int HIDE_OP = 3;
 	private static final int DUPLICATE_OP = 2;
 	private static final int REMOVE_DUPLICATE_OP = 3;
-	private static final String HIDE = "Hide Prayer";
-	private static final String UNHIDE = "Unhide Prayer";
 	private static final int ACTIVATE_OP = 1;
 	private static final String PRAYER_CONFIG_GROUP = "prayer";
 	private static final String DUPLICATE = "Duplicate";
 	private static final String REMOVE_DUPLICATE = "Remove duplicate";
 	private static final String LOCK_REORDERING = "Disable prayer reordering";
 	private static final String UNLOCK_REORDERING = "Enable prayer reordering";
-	private static final String MANAGE_HIDDEN_PRAYERS = "Manage hidden prayers";
-
-	private static final WidgetMenuOption FIXED_MANAGE_HIDDEN_PRAYERS = new WidgetMenuOption(MANAGE_HIDDEN_PRAYERS,
-			"", InterfaceID.Toplevel.STONE5);
-
-	private static final WidgetMenuOption RESIZABLE_MANAGE_HIDDEN_PRAYERS = new WidgetMenuOption(MANAGE_HIDDEN_PRAYERS,
-			"", InterfaceID.ToplevelOsrsStretch.STONE5);
-
-	private static final WidgetMenuOption RESIZABLE_BOTTOM_LINE_MANAGE_HIDDEN_PRAYERS = new WidgetMenuOption(MANAGE_HIDDEN_PRAYERS,
-			"", InterfaceID.ToplevelPreEoc.STONE5);
 
 	@Inject
 	private Client client;
@@ -95,25 +77,13 @@ public class DuplicatePrayersPlugin extends Plugin
 	@Inject
 	private ConfigManager configManager;
 
-	@Inject
-	private MenuManager menuManager;
-
-	@Inject
-	private ChatboxPanelManager chatboxPanelManager;
-
 	private final Map<Widget, Slot> duplicateWidgets = new HashMap<>();
 	private final Map<Widget, Widget> duplicateRoots = new HashMap<>();
-	private final Set<Integer> hiddenPrayerIds = new HashSet<>();
 	private boolean prayerReordering;
-	private int lastPrayerPoints = -1;
-	private int lastHideToggleTick = -1;
-	private int lastHideTogglePrayerId = -1;
 
 	@Override
 	protected void startUp()
 	{
-		addPrayerTabMenus();
-
 		if (client.getGameState() == GameState.LOGGED_IN)
 		{
 			clientThread.invokeLater(this::redrawPrayers);
@@ -123,8 +93,6 @@ public class DuplicatePrayersPlugin extends Plugin
 	@Override
 	protected void shutDown()
 	{
-		removePrayerTabMenus();
-
 		clientThread.invokeLater(() ->
 		{
 			clearDuplicateWidgets();
@@ -149,16 +117,6 @@ public class DuplicatePrayersPlugin extends Plugin
 			clearDuplicateWidgets();
 			rebuildPrayers();
 		});
-	}
-
-	private void addPrayerTabMenus()
-	{
-		// Optie verwijderd op verzoek
-	}
-
-	private void removePrayerTabMenus()
-	{
-		// Optie verwijderd op verzoek
 	}
 
 	@Subscribe
@@ -205,21 +163,6 @@ public class DuplicatePrayersPlugin extends Plugin
 				syncAllDuplicatePrayerStates();
 			}
 		}
-	}
-
-	private void logPrayerUpdate(int scriptId)
-	{
-		int prayerPoints = client.getBoostedSkillLevel(Skill.PRAYER);
-		if (scriptId == ScriptID.PRAYER_UPDATEBUTTON && prayerPoints != lastPrayerPoints)
-		{
-			log.debug("Prayer update button fired after prayer point change: previous={} current={}",
-					lastPrayerPoints, prayerPoints);
-		}
-		else
-		{
-			log.debug("Prayer script fired: scriptId={} currentPrayer={}", scriptId, prayerPoints);
-		}
-		lastPrayerPoints = prayerPoints;
 	}
 
 	@Subscribe
@@ -270,27 +213,6 @@ public class DuplicatePrayersPlugin extends Plugin
 			return;
 		}
 
-		// Check voor nieuwe unieke strings
-		if (HIDE.equals(option) || UNHIDE.equals(option))
-		{
-			if (!prayerReordering)
-			{
-				return;
-			}
-
-			event.consume();
-			if (HIDE.equals(option))
-			{
-				setHidden(prayerbook, prayerId, true);
-			}
-			else
-			{
-				unhidePrayer(prayerbook, prayerId);
-			}
-			// Rebuild zorgt voor correcte visuele staat
-			return;
-		}
-
 		if (DUPLICATE.equals(option))
 		{
 			List<Slot> slots = getPrayerSlots(prayerbook);
@@ -308,25 +230,6 @@ public class DuplicatePrayersPlugin extends Plugin
 
 			event.consume();
 			duplicatePrayer(prayerbook, prayerId);
-		}
-	}
-
-	private void updateHiddenPrayerStyles()
-	{
-		int prayerbook = client.getVarbitValue(VarbitID.PRAYERBOOK);
-		EnumComposition prayerBookEnum = getPrayerBookEnum(prayerbook);
-
-		for (Slot slot : getPrayerSlots(prayerbook))
-		{
-			Widget w = getPrayerWidget(prayerBookEnum, slot.getPrayerId());
-			if (w != null)
-			{
-				boolean hidden = isHidden(prayerbook, slot.getPrayerId());
-				// FIX: Verberg de widget echt als hij hidden is, anders toont hij altijd
-				w.setHidden(hidden);
-				w.setOpacity(hidden ? 150 : 0);
-				w.setHasListener(!hidden);
-			}
 		}
 	}
 
@@ -591,20 +494,6 @@ public class DuplicatePrayersPlugin extends Plugin
 		return findAvailableHiddenSlotIndex(prayerbook, slots) != -1;
 	}
 
-	private int findHiddenSlotIndex(int prayerbook, List<Slot> slots, int prayerId)
-	{
-		for (int i = 0; i < slots.size(); ++i)
-		{
-			Slot slot = slots.get(i);
-			if (isHiddenSlot(prayerbook, slot) && slot.getPrayerId() == prayerId)
-			{
-				return i;
-			}
-		}
-
-		return -1;
-	}
-
 	private int findOriginalSlotIndex(List<Slot> slots, int prayerId)
 	{
 		for (int i = 0; i < slots.size(); ++i)
@@ -822,20 +711,6 @@ public class DuplicatePrayersPlugin extends Plugin
 		return trimmed;
 	}
 
-	private int visibleSlotCount(int prayerbook, List<Slot> slots)
-	{
-		int visible = 0;
-		for (Slot slot : slots)
-		{
-			if (isHiddenSlot(prayerbook, slot))
-			{
-				continue;
-			}
-			++visible;
-		}
-		return visible;
-	}
-
 	private boolean isHidden(int prayerbook, int prayerId)
 	{
 		Boolean hidden = configManager.getConfiguration(PRAYER_CONFIG_GROUP,
@@ -871,43 +746,9 @@ public class DuplicatePrayersPlugin extends Plugin
 		}
 	}
 
-	private void openHiddenPrayerManager()
-	{
-		int prayerbook = client.getVarbitValue(VarbitID.PRAYERBOOK);
-		EnumComposition prayerBookEnum = getPrayerBookEnum(prayerbook);
-		ChatboxTextMenuInput menu = chatboxPanelManager.openTextMenuInput("Manage hidden prayers");
-		int hiddenCount = 0;
-
-		for (Slot slot : defaultPrayerSlots(prayerBookEnum))
-		{
-			int prayerId = slot.getPrayerId();
-			if (!isHidden(prayerbook, prayerId))
-			{
-				continue;
-			}
-
-			String prayerName = getPrayerName(prayerBookEnum, prayerId);
-			menu.option("Unhide " + prayerName, () -> unhidePrayer(prayerbook, prayerId));
-			++hiddenCount;
-		}
-
-		if (hiddenCount == 0)
-		{
-			menu.option("No hidden prayers", () -> {});
-		}
-
-		menu.build();
-	}
-
 	private void unhidePrayer(int prayerbook, int prayerId)
 	{
 		setHidden(prayerbook, prayerId, false);
-	}
-
-	private String getPrayerName(EnumComposition prayerBookEnum, int prayerId)
-	{
-		int prayerObjId = prayerBookEnum.getIntValue(prayerId);
-		return client.getItemDefinition(prayerObjId).getName();
 	}
 
 	private boolean containsPrayerKey(EnumComposition prayerEnum, int prayerId)
@@ -1023,7 +864,7 @@ public class DuplicatePrayersPlugin extends Plugin
 			Widget widget = getPrayerWidget(prayerBookEnum, prayerId);
 			if (widget != null)
 			{
-				widget.setHidden(true); // Verbergt alle originele prayers voor de herbouw
+				widget.setHidden(true);
 			}
 		}
 	}
@@ -1091,7 +932,6 @@ public class DuplicatePrayersPlugin extends Plugin
 				continue;
 			}
 
-			// Originele prayer check
 			if (!slot.isDuplicate())
 			{
 				if (renderedOriginals.contains(slot.getPrayerId())) continue;
@@ -1115,15 +955,13 @@ public class DuplicatePrayersPlugin extends Plugin
 			}
 			else
 			{
-				// Altijd tonen, maar verander de opacity/transparantie als hij verborgen is
 				original.setHidden(false);
-				original.setOpacity(hidden ? 150 : 0); // 150 is semi-transparant, 0 is volledig zichtbaar
+				original.setOpacity(hidden ? 150 : 0);
 				setPrayerIconOpacity(original, false);
 				original.setPos(x, y);
 
-				// Verberg de primaire "Activate"-actie voor verborgen prayers zodat ze niet
-				// per ongeluk geactiveerd kunnen worden. De widget blijft klikbaar zodat de
-				// native Hide/Unhide-optie en onze Duplicate-optie beschikbaar blijven.
+				// Suppress the activate action on hidden prayers so they cannot be accidentally
+				// activated; the Hide/Unhide and Duplicate options remain available.
 				original.setAction(0, hidden ? null : getPrimaryAction(original, slot.getPrayerId()));
 				original.setAction(DUPLICATE_OP, prayerReordering
 						&& hasAvailableHiddenSlot(prayerbook, slots)
@@ -1151,28 +989,6 @@ public class DuplicatePrayersPlugin extends Plugin
 		int prayerObjId = prayerBookEnum.getIntValue(prayerId);
 		ItemComposition prayerObj = client.getItemDefinition(prayerObjId);
 		return client.getWidget(prayerObj.getIntValue(ParamID.OC_PRAYER_COMPONENT));
-	}
-
-	private void clearPrayerReorderActions(EnumComposition prayerBookEnum)
-	{
-		for (int prayerId : prayerBookEnum.getKeys())
-		{
-			Widget prayerWidget = getPrayerWidget(prayerBookEnum, prayerId);
-			if (prayerWidget == null)
-			{
-				continue;
-			}
-
-			prayerWidget.setAction(HIDE_OP, null);
-		}
-	}
-
-	private String normalizePrayerName(String name)
-	{
-		return name.replaceAll("<[^>]*>", "")
-				.replaceAll("[^A-Za-z0-9]+", " ")
-				.trim()
-				.toLowerCase();
 	}
 
 	private Widget createDuplicateWidget(Widget original, Slot slot, int x, int y, boolean canDuplicate)
@@ -1314,11 +1130,11 @@ public class DuplicatePrayersPlugin extends Plugin
 			return;
 		}
 
-		// 1. Synchroniseer de hover tekst (Activate / Deactivate) exact met het origineel
+		// Sync hover text (Activate / Deactivate) with the original
 		String primaryAction = getPrimaryAction(original, slot.getPrayerId());
 		duplicate.setAction(0, primaryAction);
 
-		// 2. Synchroniseer de visuele laag (sprites/hidden states van de iconen en achtergronden)
+		// Sync visual state (sprite/hidden state of child widgets)
 		Widget[] origChildren = original.getDynamicChildren();
 		Widget[] dupChildren = duplicate.getDynamicChildren();
 
@@ -1355,34 +1171,6 @@ public class DuplicatePrayersPlugin extends Plugin
 		{
 			prayerIcon.setOpacity(hidden ? 200 : 0);
 		}
-	}
-
-	private Prayer getPrayer(int prayerId)
-	{
-		int prayerbook = client.getVarbitValue(VarbitID.PRAYERBOOK);
-		EnumComposition prayerBookEnum = getPrayerBookEnum(prayerbook);
-		int prayerObjId = prayerBookEnum.getIntValue(prayerId);
-		if (prayerObjId == -1)
-		{
-			return null;
-		}
-
-		String prayerName = normalizePrayerName(client.getItemDefinition(prayerObjId).getName());
-		for (Prayer prayer : Prayer.values())
-		{
-			String enumName = normalizePrayerName(prayer.name().replace('_', ' '));
-			if (enumName.equals(prayerName))
-			{
-				return prayer;
-			}
-
-			if (enumName.startsWith("rp ") && enumName.substring(3).equals(prayerName))
-			{
-				return prayer;
-			}
-		}
-
-		return null;
 	}
 
 	private String getPrimaryAction(Widget original, int prayerId)
@@ -1566,32 +1354,6 @@ public class DuplicatePrayersPlugin extends Plugin
 		return -1;
 	}
 
-	private int countVisibleOriginals(int prayerbook, List<Slot> slots)
-	{
-		int count = 0;
-		for (Slot slot : slots)
-		{
-			if (!slot.isDuplicate() && !isHidden(prayerbook, slot.getPrayerId()))
-			{
-				++count;
-			}
-		}
-		return count;
-	}
-
-	private int countDuplicates(List<Slot> slots)
-	{
-		int count = 0;
-		for (Slot slot : slots)
-		{
-			if (slot.isDuplicate())
-			{
-				++count;
-			}
-		}
-		return count;
-	}
-
 	private boolean hasDuplicateForPrayer(List<Slot> slots, int prayerId)
 	{
 		for (Slot slot : slots)
@@ -1638,12 +1400,5 @@ public class DuplicatePrayersPlugin extends Plugin
 			int duplicateId = parts.length == 2 ? Integer.parseInt(parts[1]) : 0;
 			return new Slot(prayerId, duplicateId != 0, duplicateId);
 		}
-	}
-	private boolean isPrayerHidden(int prayerbook, int prayerId)
-	{
-		// Gebruik exact dezelfde logica als in je setHidden() methode
-		Boolean hidden = configManager.getConfiguration(PRAYER_CONFIG_GROUP,
-				"prayer_hidden_book_" + prayerbook + "_" + prayerId, boolean.class);
-		return hidden == Boolean.TRUE;
 	}
 }
