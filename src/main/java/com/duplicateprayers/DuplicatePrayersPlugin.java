@@ -1,6 +1,7 @@
 package com.duplicateprayers;
 
 import com.google.inject.Provides;
+import java.awt.Rectangle;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -20,6 +21,7 @@ import net.runelite.api.GameState;
 import net.runelite.api.ItemComposition;
 import net.runelite.api.MenuAction;
 import net.runelite.api.ParamID;
+import net.runelite.api.Point;
 import net.runelite.api.Prayer;
 import net.runelite.api.ScriptID;
 import net.runelite.api.Skill;
@@ -333,25 +335,38 @@ public class DuplicatePrayersPlugin extends Plugin
 
 		Widget draggedWidget = client.getDraggedWidget();
 		Widget draggedOnWidget = client.getDraggedOnWidget();
-		if (draggedWidget == null || draggedOnWidget == null)
+		if (draggedWidget == null)
 		{
 			return;
 		}
 
 		int prayerbook = client.getVarbitValue(VarbitID.PRAYERBOOK);
 		Slot draggedDuplicateSlot = findDuplicateSlotForWidget(draggedWidget);
-		Slot draggedOnDuplicateSlot = findDuplicateSlotForWidget(draggedOnWidget);
+		Slot draggedOnDuplicateSlot = draggedOnWidget == null ? null : findDuplicateSlotForWidget(draggedOnWidget);
 		int draggedGroupId = WidgetUtil.componentToInterface(draggedWidget.getId());
-		int draggedOnGroupId = WidgetUtil.componentToInterface(draggedOnWidget.getId());
-		if ((draggedDuplicateSlot == null && draggedGroupId != InterfaceID.PRAYERBOOK)
-				|| (draggedOnDuplicateSlot == null && draggedOnGroupId != InterfaceID.PRAYERBOOK))
+		if (draggedDuplicateSlot == null && draggedGroupId != InterfaceID.PRAYERBOOK)
 		{
 			return;
 		}
 
+		if (draggedOnWidget != null)
+		{
+			int draggedOnGroupId = WidgetUtil.componentToInterface(draggedOnWidget.getId());
+			if (draggedOnDuplicateSlot == null && draggedOnGroupId != InterfaceID.PRAYERBOOK)
+			{
+				return;
+			}
+		}
+
 		List<Slot> slots = getPrayerSlots(prayerbook);
 		Slot fromSlot = draggedDuplicateSlot != null ? draggedDuplicateSlot : findSlotForWidget(prayerbook, draggedWidget);
-		Slot toSlot = draggedOnDuplicateSlot != null ? draggedOnDuplicateSlot : findSlotForWidget(prayerbook, draggedOnWidget);
+		Slot toSlot = draggedOnDuplicateSlot != null ? draggedOnDuplicateSlot
+				: draggedOnWidget == null ? null : findSlotForWidget(prayerbook, draggedOnWidget);
+		if (toSlot == null)
+		{
+			toSlot = findSlotAtMousePosition(prayerbook, slots, fromSlot);
+		}
+
 		if (fromSlot == null || toSlot == null)
 		{
 			return;
@@ -396,6 +411,71 @@ public class DuplicatePrayersPlugin extends Plugin
 	private int linkedPairTargetIndex(int prayerbook, List<Slot> slots, int slotIdx)
 	{
 		return isLinkedHiddenSlot(prayerbook, slots, slotIdx) ? slotIdx - 1 : slotIdx;
+	}
+
+	private Slot findSlotAtMousePosition(int prayerbook, List<Slot> slots, Slot ignoredSlot)
+	{
+		Point mouse = client.getMouseCanvasPosition();
+		if (mouse == null)
+		{
+			return null;
+		}
+
+		EnumComposition prayerBookEnum = getPrayerBookEnum(prayerbook);
+		for (int i = 0; i < slots.size(); ++i)
+		{
+			Slot slot = slots.get(i);
+			if (slot.equals(ignoredSlot))
+			{
+				continue;
+			}
+
+			if (isHiddenSlot(prayerbook, slot) && isLinkedHiddenSlot(prayerbook, slots, i))
+			{
+				continue;
+			}
+
+			if (slot.isDuplicate())
+			{
+				if (duplicateSlotContainsMouse(slot, mouse))
+				{
+					return slot;
+				}
+				continue;
+			}
+
+			Widget widget = getPrayerWidget(prayerBookEnum, slot.getPrayerId());
+			if (widgetContainsMouse(widget, mouse))
+			{
+				return slot;
+			}
+		}
+
+		return null;
+	}
+
+	private boolean duplicateSlotContainsMouse(Slot slot, Point mouse)
+	{
+		for (Map.Entry<Widget, Slot> entry : duplicateWidgets.entrySet())
+		{
+			if (slot.equals(entry.getValue()) && widgetContainsMouse(entry.getKey(), mouse))
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private boolean widgetContainsMouse(Widget widget, Point mouse)
+	{
+		if (widget == null || widget.isSelfHidden())
+		{
+			return false;
+		}
+
+		Rectangle bounds = widget.getBounds();
+		return bounds != null && bounds.contains(mouse.getX(), mouse.getY());
 	}
 
 	private boolean moveLinkedDuplicatePair(int prayerbook, List<Slot> slots, int duplicateIdx, int targetIdx)
@@ -958,7 +1038,7 @@ public class DuplicatePrayersPlugin extends Plugin
 						hiddenWidget.setPos(x, y);
 						hiddenWidget.setAction(0, null);
 						hiddenWidget.setAction(DUPLICATE_OP, null);
-						hiddenWidget.setClickMask(hiddenWidget.getClickMask() & ~(DRAG | DRAG_ON));
+						hiddenWidget.setClickMask((hiddenWidget.getClickMask() & ~DRAG) | DRAG_ON);
 						hiddenWidget.setHasListener(true);
 						hiddenWidget.revalidate();
 					}
