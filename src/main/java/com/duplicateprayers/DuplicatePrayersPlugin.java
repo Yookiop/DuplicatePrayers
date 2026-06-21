@@ -360,12 +360,46 @@ public class DuplicatePrayersPlugin extends Plugin
 			return;
 		}
 
-		client.setDraggedOnWidget(null);
+		if (!moveLinkedDuplicatePair(prayerbook, slots, fromIdx, toIdx))
+		{
+			return;
+		}
 
-		slots.set(fromIdx, toSlot);
-		slots.set(toIdx, fromSlot);
+		client.setDraggedOnWidget(null);
 		setPrayerSlots(prayerbook, slots);
 		rebuildPrayers();
+	}
+
+	private boolean moveLinkedDuplicatePair(int prayerbook, List<Slot> slots, int duplicateIdx, int targetIdx)
+	{
+		Slot duplicateSlot = slots.get(duplicateIdx);
+		if (!duplicateSlot.isDuplicate() || !isHidden(prayerbook, duplicateSlot.getPrayerId()))
+		{
+			return false;
+		}
+
+		int hiddenIdx = findOriginalSlotIndex(slots, duplicateSlot.getPrayerId());
+		if (hiddenIdx == -1 || targetIdx == duplicateIdx || targetIdx == hiddenIdx)
+		{
+			return false;
+		}
+
+		Slot hiddenSlot = slots.get(hiddenIdx);
+		int insertIdx = targetIdx;
+		if (duplicateIdx < insertIdx)
+		{
+			--insertIdx;
+		}
+		if (hiddenIdx < insertIdx)
+		{
+			--insertIdx;
+		}
+
+		slots.remove(Math.max(duplicateIdx, hiddenIdx));
+		slots.remove(Math.min(duplicateIdx, hiddenIdx));
+		slots.add(insertIdx, duplicateSlot);
+		slots.add(insertIdx + 1, hiddenSlot);
+		return true;
 	}
 
 	private void duplicatePrayer(int prayerbook, int prayerId)
@@ -416,6 +450,25 @@ public class DuplicatePrayersPlugin extends Plugin
 		return -1;
 	}
 
+	private int findOriginalSlotIndex(List<Slot> slots, int prayerId)
+	{
+		for (int i = 0; i < slots.size(); ++i)
+		{
+			Slot slot = slots.get(i);
+			if (!slot.isDuplicate() && slot.getPrayerId() == prayerId)
+			{
+				return i;
+			}
+		}
+
+		return -1;
+	}
+
+	private boolean containsOriginalSlot(List<Slot> slots, int prayerId)
+	{
+		return findOriginalSlotIndex(slots, prayerId) != -1;
+	}
+
 	private int nextDuplicateId(List<Slot> slots)
 	{
 		return slots.stream()
@@ -459,37 +512,79 @@ public class DuplicatePrayersPlugin extends Plugin
 
 	private List<Slot> normalizePrayerSlots(int prayerbook, EnumComposition prayerEnum, List<Slot> slots) {
 		List<Slot> normalized = new ArrayList<>();
-		int[] prayerOrder = getPrayerOrder(prayerbook, prayerEnum);
-		int prayerIndex = 0;
+		Set<Integer> addedOriginals = new HashSet<>();
+		Set<Integer> addedDuplicates = new HashSet<>();
 
 		for (Slot slot : slots)
 		{
+			if (!containsPrayerKey(prayerEnum, slot.getPrayerId()))
+			{
+				continue;
+			}
+
 			if (slot.isDuplicate())
 			{
-				if (containsPrayerKey(prayerEnum, slot.getPrayerId())
-						&& isHidden(prayerbook, slot.getPrayerId())
-						&& !hasDuplicateForPrayer(normalized, slot.getPrayerId()))
+				if (isHidden(prayerbook, slot.getPrayerId())
+						&& !addedDuplicates.contains(slot.getPrayerId())
+						&& containsOriginalSlot(slots, slot.getPrayerId()))
 				{
 					normalized.add(slot);
+					addedDuplicates.add(slot.getPrayerId());
 				}
 				continue;
 			}
 
-			if (prayerIndex < prayerOrder.length)
+			if (addedOriginals.add(slot.getPrayerId()))
 			{
-				normalized.add(new Slot(prayerOrder[prayerIndex++], false, 0));
+				normalized.add(slot);
 			}
 		}
 
-		while (prayerIndex < prayerOrder.length)
+		for (int prayerId : getPrayerOrder(prayerbook, prayerEnum))
 		{
-			normalized.add(new Slot(prayerOrder[prayerIndex++], false, 0));
+			if (addedOriginals.add(prayerId))
+			{
+				normalized.add(new Slot(prayerId, false, 0));
+			}
 		}
 
+		normalized = normalizeLinkedDuplicateSlots(prayerbook, normalized);
 		normalized = trimOverflowDuplicates(prayerbook, normalized);
 
 		if (!normalized.equals(slots)) {
 			setPrayerSlots(prayerbook, normalized);
+		}
+
+		return normalized;
+	}
+
+	private List<Slot> normalizeLinkedDuplicateSlots(int prayerbook, List<Slot> slots)
+	{
+		List<Slot> normalized = new ArrayList<>(slots);
+		for (int i = 0; i < normalized.size(); ++i)
+		{
+			Slot slot = normalized.get(i);
+			if (!slot.isDuplicate() || !isHidden(prayerbook, slot.getPrayerId()))
+			{
+				continue;
+			}
+
+			int hiddenIdx = findOriginalSlotIndex(normalized, slot.getPrayerId());
+			if (hiddenIdx == -1)
+			{
+				normalized.remove(i--);
+				continue;
+			}
+
+			if (hiddenIdx != i + 1)
+			{
+				Slot hiddenSlot = normalized.remove(hiddenIdx);
+				if (hiddenIdx < i)
+				{
+					--i;
+				}
+				normalized.add(i + 1, hiddenSlot);
+			}
 		}
 
 		return normalized;
