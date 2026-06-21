@@ -1,2 +1,1 @@
-# Example
-An example greeter plugin
+This plugin allows you to duplicate a prayer to a prayer slot area made available by hiding other prayers
