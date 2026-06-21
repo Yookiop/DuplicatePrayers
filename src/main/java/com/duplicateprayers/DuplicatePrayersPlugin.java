@@ -387,7 +387,7 @@ public class DuplicatePrayersPlugin extends Plugin
 		}
 
 		client.setDraggedOnWidget(null);
-		if (!moveLinkedDuplicatePair(prayerbook, slots, duplicateIdx, targetIdx))
+		if (!swapLinkedDuplicatePair(prayerbook, slots, duplicateIdx, targetIdx))
 		{
 			rebuildPrayers();
 			return;
@@ -478,7 +478,7 @@ public class DuplicatePrayersPlugin extends Plugin
 		return bounds != null && bounds.contains(mouse.getX(), mouse.getY());
 	}
 
-	private boolean moveLinkedDuplicatePair(int prayerbook, List<Slot> slots, int duplicateIdx, int targetIdx)
+	private boolean swapLinkedDuplicatePair(int prayerbook, List<Slot> slots, int duplicateIdx, int targetIdx)
 	{
 		Slot duplicateSlot = slots.get(duplicateIdx);
 		if (!duplicateSlot.isDuplicate())
@@ -492,22 +492,43 @@ public class DuplicatePrayersPlugin extends Plugin
 			return false;
 		}
 
-		Slot hiddenSlot = slots.get(hiddenIdx);
-		int insertIdx = targetIdx;
-		if (duplicateIdx < insertIdx)
+		int duplicateUnitEnd = hiddenIdx + 1;
+		int targetUnitEnd = targetIdx + targetSlotLength(prayerbook, slots, targetIdx);
+		if (duplicateIdx < targetUnitEnd && targetIdx < duplicateUnitEnd)
 		{
-			--insertIdx;
-		}
-		if (hiddenIdx < insertIdx)
-		{
-			--insertIdx;
+			return false;
 		}
 
-		slots.remove(Math.max(duplicateIdx, hiddenIdx));
-		slots.remove(Math.min(duplicateIdx, hiddenIdx));
-		slots.add(insertIdx, duplicateSlot);
-		slots.add(insertIdx + 1, hiddenSlot);
+		List<Slot> duplicateUnit = new ArrayList<>(slots.subList(duplicateIdx, duplicateUnitEnd));
+		List<Slot> targetUnit = new ArrayList<>(slots.subList(targetIdx, targetUnitEnd));
+		List<Slot> swapped = new ArrayList<>(slots.size());
+
+		if (duplicateIdx < targetIdx)
+		{
+			swapped.addAll(slots.subList(0, duplicateIdx));
+			swapped.addAll(targetUnit);
+			swapped.addAll(slots.subList(duplicateUnitEnd, targetIdx));
+			swapped.addAll(duplicateUnit);
+			swapped.addAll(slots.subList(targetUnitEnd, slots.size()));
+		}
+		else
+		{
+			swapped.addAll(slots.subList(0, targetIdx));
+			swapped.addAll(duplicateUnit);
+			swapped.addAll(slots.subList(targetUnitEnd, duplicateIdx));
+			swapped.addAll(targetUnit);
+			swapped.addAll(slots.subList(duplicateUnitEnd, slots.size()));
+		}
+
+		slots.clear();
+		slots.addAll(swapped);
 		return true;
+	}
+
+	private int targetSlotLength(int prayerbook, List<Slot> slots, int targetIdx)
+	{
+		Slot targetSlot = slots.get(targetIdx);
+		return targetSlot.isDuplicate() && findLinkedHiddenSlotIndex(prayerbook, slots, targetIdx) != -1 ? 2 : 1;
 	}
 
 	private void duplicatePrayer(int prayerbook, int prayerId)
