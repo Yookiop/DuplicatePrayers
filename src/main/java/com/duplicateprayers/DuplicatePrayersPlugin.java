@@ -246,7 +246,15 @@ public class DuplicatePrayersPlugin extends Plugin
 
 		if ("Hide".equals(option) || "Unhide".equals(option))
 		{
-			clientThread.invokeLater(this::rebuildPrayers);
+			event.consume();
+			if ("Hide".equals(option))
+			{
+				setHidden(prayerbook, prayerId, true);
+			}
+			else
+			{
+				unhidePrayer(prayerbook, prayerId);
+			}
 			return;
 		}
 
@@ -260,10 +268,9 @@ public class DuplicatePrayersPlugin extends Plugin
 			}
 			else
 			{
-				setHidden(prayerbook, prayerId, false);
+				unhidePrayer(prayerbook, prayerId);
 			}
 			// Rebuild zorgt voor correcte visuele staat
-			rebuildPrayers();
 			return;
 		}
 
@@ -818,6 +825,12 @@ public class DuplicatePrayersPlugin extends Plugin
 
 	private void setHidden(int prayerbook, int prayerId, boolean hidden)
 	{
+		setHiddenConfig(prayerbook, prayerId, hidden);
+		rebuildPrayers();
+	}
+
+	private void setHiddenConfig(int prayerbook, int prayerId, boolean hidden)
+	{
 		String key = "prayer_hidden_book_" + prayerbook + "_" + prayerId;
 		if (hidden)
 		{
@@ -825,10 +838,8 @@ public class DuplicatePrayersPlugin extends Plugin
 		}
 		else
 		{
-			// Zorg dat je hier alleen de specifieke key wist!
 			configManager.unsetConfiguration(PRAYER_CONFIG_GROUP, key);
 		}
-		rebuildPrayers();
 	}
 
 	private void openHiddenPrayerManager()
@@ -861,28 +872,10 @@ public class DuplicatePrayersPlugin extends Plugin
 
 	private void unhidePrayer(int prayerbook, int prayerId)
 	{
+		setHiddenConfig(prayerbook, prayerId, false);
 		List<Slot> slots = getPrayerSlots(prayerbook);
-		for (int i = 0; i < slots.size(); ++i)
-		{
-			Slot slot = slots.get(i);
-			if (!slot.isDuplicate() && slot.getPrayerId() == prayerId)
-			{
-				if (i > 0 && slots.get(i - 1).isDuplicate())
-				{
-					slots.remove(i - 1);
-				}
-				else if (i + 1 < slots.size() && slots.get(i + 1).isDuplicate())
-				{
-					slots.remove(i + 1);
-				}
-				break;
-			}
-		}
-
-		setHidden(prayerbook, prayerId, false);
 		setPrayerSlots(prayerbook, slots);
-		redrawPrayers();
-		clientThread.invokeLater(this::rebuildPrayers);
+		rebuildPrayers();
 	}
 
 	private String getPrayerName(EnumComposition prayerBookEnum, int prayerId)
