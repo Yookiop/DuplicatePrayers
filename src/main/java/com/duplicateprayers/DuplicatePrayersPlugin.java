@@ -196,7 +196,14 @@ public class DuplicatePrayersPlugin extends Plugin
 
 		if (event.getScriptId() == ScriptID.PRAYER_UPDATEBUTTON)
 		{
-			syncAllDuplicatePrayerStates();
+			if (prayerReordering && isPrayerBookOpen())
+			{
+				rebuildPrayers();
+			}
+			else
+			{
+				syncAllDuplicatePrayerStates();
+			}
 		}
 	}
 
@@ -246,6 +253,11 @@ public class DuplicatePrayersPlugin extends Plugin
 
 		if ("Hide".equals(option) || "Unhide".equals(option))
 		{
+			if (!prayerReordering)
+			{
+				return;
+			}
+
 			event.consume();
 			if ("Hide".equals(option))
 			{
@@ -261,6 +273,11 @@ public class DuplicatePrayersPlugin extends Plugin
 		// Check voor nieuwe unieke strings
 		if (HIDE.equals(option) || UNHIDE.equals(option))
 		{
+			if (!prayerReordering)
+			{
+				return;
+			}
+
 			event.consume();
 			if (HIDE.equals(option))
 			{
@@ -706,24 +723,27 @@ public class DuplicatePrayersPlugin extends Plugin
 				continue;
 			}
 
-			int hiddenIdx = findLinkedHiddenSlotIndex(prayerbook, normalized, i);
-			if (hiddenIdx == -1)
+			int linkedHiddenIdx = findLinkedHiddenSlotIndex(prayerbook, normalized, i);
+			int availableHiddenIdx = findAvailableHiddenSlotIndex(prayerbook, normalized);
+			if (linkedHiddenIdx != -1 && (availableHiddenIdx == -1 || availableHiddenIdx > i))
 			{
-				hiddenIdx = findAvailableHiddenSlotIndex(prayerbook, normalized);
-				if (hiddenIdx == -1)
-				{
-					normalized.remove(i--);
-					continue;
-				}
-
-				Slot hiddenSlot = normalized.remove(hiddenIdx);
-				if (hiddenIdx < i)
-				{
-					--i;
-				}
-
-				normalized.add(i + 1, hiddenSlot);
+				continue;
 			}
+
+			if (availableHiddenIdx == -1)
+			{
+				normalized.remove(i--);
+				continue;
+			}
+
+			Slot duplicateSlot = normalized.remove(i);
+			if (i < availableHiddenIdx)
+			{
+				--availableHiddenIdx;
+			}
+
+			normalized.add(availableHiddenIdx, duplicateSlot);
+			i = availableHiddenIdx;
 		}
 
 		return normalized;
@@ -826,6 +846,7 @@ public class DuplicatePrayersPlugin extends Plugin
 	private void setHidden(int prayerbook, int prayerId, boolean hidden)
 	{
 		setHiddenConfig(prayerbook, prayerId, hidden);
+		updatePrayerHiddenStyle(prayerbook, prayerId, hidden);
 		rebuildPrayers();
 	}
 
@@ -873,6 +894,7 @@ public class DuplicatePrayersPlugin extends Plugin
 	private void unhidePrayer(int prayerbook, int prayerId)
 	{
 		setHiddenConfig(prayerbook, prayerId, false);
+		updatePrayerHiddenStyle(prayerbook, prayerId, false);
 		List<Slot> slots = getPrayerSlots(prayerbook);
 		setPrayerSlots(prayerbook, slots);
 		rebuildPrayers();
@@ -1042,15 +1064,18 @@ public class DuplicatePrayersPlugin extends Plugin
 
 						hiddenWidget.setHidden(false);
 						hiddenWidget.setOpacity(150);
+						setPrayerIconOpacity(hiddenWidget, true);
 						hiddenWidget.setPos(x, y);
 						hiddenWidget.setAction(0, null);
 						hiddenWidget.setAction(DUPLICATE_OP, null);
+						hiddenWidget.setAction(HIDE_OP, coveredByLinkedDuplicate ? null : "Unhide");
 						hiddenWidget.setClickMask(coveredByLinkedDuplicate ? 0 : (hiddenWidget.getClickMask() & ~DRAG) | DRAG_ON);
 						hiddenWidget.setHasListener(true);
 						hiddenWidget.revalidate();
 					}
 					else
 					{
+						setPrayerIconOpacity(hiddenWidget, false);
 						hiddenWidget.setHidden(true);
 					}
 				}
@@ -1089,6 +1114,7 @@ public class DuplicatePrayersPlugin extends Plugin
 				// Altijd tonen, maar verander de opacity/transparantie als hij verborgen is
 				original.setHidden(false);
 				original.setOpacity(hidden ? 150 : 0); // 150 is semi-transparant, 0 is volledig zichtbaar
+				setPrayerIconOpacity(original, false);
 				original.setPos(x, y);
 
 				// Verberg de primaire "Activate"-actie voor verborgen prayers zodat ze niet
@@ -1098,6 +1124,7 @@ public class DuplicatePrayersPlugin extends Plugin
 				original.setAction(DUPLICATE_OP, prayerReordering
 						&& hasAvailableHiddenSlot(prayerbook, slots)
 						&& !hasDuplicateForPrayer(slots, slot.getPrayerId()) ? DUPLICATE : null);
+				original.setAction(HIDE_OP, prayerReordering ? "Hide" : null);
 				original.setHasListener(true);
 				original.revalidate();
 			}
@@ -1165,7 +1192,7 @@ public class DuplicatePrayersPlugin extends Plugin
 
 		duplicate.setAction(0, getPrimaryAction(original, slot.getPrayerId()));
 		duplicate.setAction(DUPLICATE_OP, null);
-		duplicate.setAction(REMOVE_DUPLICATE_OP, REMOVE_DUPLICATE);
+		duplicate.setAction(REMOVE_DUPLICATE_OP, prayerReordering ? REMOVE_DUPLICATE : null);
 		duplicate.setHasListener(true);
 		duplicate.setOnOpListener((JavaScriptCallback) event ->
 		{
@@ -1177,7 +1204,7 @@ public class DuplicatePrayersPlugin extends Plugin
 			{
 				activateOriginalPrayer(original, slot.getPrayerId());
 			}
-			else if (op == REMOVE_DUPLICATE_OP + 1)
+			else if (prayerReordering && op == REMOVE_DUPLICATE_OP + 1)
 			{
 				removeDuplicate(client.getVarbitValue(VarbitID.PRAYERBOOK), slot);
 			}
@@ -1196,7 +1223,7 @@ public class DuplicatePrayersPlugin extends Plugin
 		widget.setHasListener(true);
 		widget.setAction(0, getPrimaryActionForSlot(slot));
 		widget.setAction(DUPLICATE_OP, null);
-		widget.setAction(REMOVE_DUPLICATE_OP, REMOVE_DUPLICATE);
+		widget.setAction(REMOVE_DUPLICATE_OP, prayerReordering ? REMOVE_DUPLICATE : null);
 		widget.setOnOpListener((JavaScriptCallback) event ->
 		{
 			int prayerbook = client.getVarbitValue(VarbitID.PRAYERBOOK);
@@ -1210,7 +1237,7 @@ public class DuplicatePrayersPlugin extends Plugin
 					activateOriginalPrayer(original, slot.getPrayerId());
 				}
 			}
-			else if (op == REMOVE_DUPLICATE_OP + 1)
+			else if (prayerReordering && op == REMOVE_DUPLICATE_OP + 1)
 			{
 				removeDuplicate(prayerbook, slot);
 			}
@@ -1328,6 +1355,25 @@ public class DuplicatePrayersPlugin extends Plugin
 					dupChild.setSpriteId(origChild.getSpriteId());
 				}
 			}
+		}
+	}
+
+	private void updatePrayerHiddenStyle(int prayerbook, int prayerId, boolean hidden)
+	{
+		EnumComposition prayerBookEnum = getPrayerBookEnum(prayerbook);
+		Widget prayerWidget = getPrayerWidget(prayerBookEnum, prayerId);
+		if (prayerWidget != null)
+		{
+			setPrayerIconOpacity(prayerWidget, hidden && prayerReordering);
+		}
+	}
+
+	private void setPrayerIconOpacity(Widget prayerWidget, boolean hidden)
+	{
+		Widget prayerIcon = prayerWidget.getChild(1);
+		if (prayerIcon != null)
+		{
+			prayerIcon.setOpacity(hidden ? 200 : 0);
 		}
 	}
 
