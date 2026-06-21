@@ -267,7 +267,7 @@ public class DuplicatePrayersPlugin extends Plugin
 
 		if (DUPLICATE.equals(option))
 		{
-			if (!prayerReordering)
+			if (!prayerReordering || !isHidden(prayerbook, prayerId))
 			{
 				return;
 			}
@@ -370,14 +370,24 @@ public class DuplicatePrayersPlugin extends Plugin
 
 	private void duplicatePrayer(int prayerbook, int prayerId)
 	{
+		if (!isHidden(prayerbook, prayerId))
+		{
+			return;
+		}
+
 		List<Slot> slots = getPrayerSlots(prayerbook);
+		if (hasDuplicateForPrayer(slots, prayerId))
+		{
+			return;
+		}
+
 		if (visibleSlotCount(prayerbook, slots) >= MAX_VISIBLE_PRAYERS)
 		{
 			return;
 		}
 
 		Slot duplicate = new Slot(prayerId, true, nextDuplicateId(slots));
-		int hiddenSlotIdx = findNextDuplicateSlotIndex(prayerbook, slots);
+		int hiddenSlotIdx = findHiddenSlotIndex(prayerbook, slots, prayerId);
 
 		if (hiddenSlotIdx != -1)
 		{
@@ -392,24 +402,15 @@ public class DuplicatePrayersPlugin extends Plugin
 		rebuildPrayers();
 	}
 
-	private int findNextDuplicateSlotIndex(int prayerbook, List<Slot> slots)
+	private int findHiddenSlotIndex(int prayerbook, List<Slot> slots, int prayerId)
 	{
-		int duplicateCount = countDuplicates(slots);
-		int hiddenCount = 0;
-
 		for (int i = 0; i < slots.size(); ++i)
 		{
-			if (!isHiddenSlot(prayerbook, slots.get(i)))
-			{
-				continue;
-			}
-
-			if (hiddenCount == duplicateCount)
+			Slot slot = slots.get(i);
+			if (isHiddenSlot(prayerbook, slot) && slot.getPrayerId() == prayerId)
 			{
 				return i;
 			}
-
-			++hiddenCount;
 		}
 
 		return -1;
@@ -465,7 +466,9 @@ public class DuplicatePrayersPlugin extends Plugin
 		{
 			if (slot.isDuplicate())
 			{
-				if (containsPrayerKey(prayerEnum, slot.getPrayerId()))
+				if (containsPrayerKey(prayerEnum, slot.getPrayerId())
+						&& isHidden(prayerbook, slot.getPrayerId())
+						&& !hasDuplicateForPrayer(normalized, slot.getPrayerId()))
 				{
 					normalized.add(slot);
 				}
@@ -555,7 +558,10 @@ public class DuplicatePrayersPlugin extends Plugin
 				++visible;
 				--originalsRemaining;
 			}
-			else if (visible < MAX_VISIBLE_PRAYERS && originalsRemaining < MAX_VISIBLE_PRAYERS - visible)
+			else if (isHidden(prayerbook, slot.getPrayerId())
+					&& !hasDuplicateForPrayer(trimmed, slot.getPrayerId())
+					&& visible < MAX_VISIBLE_PRAYERS
+					&& originalsRemaining < MAX_VISIBLE_PRAYERS - visible)
 			{
 				trimmed.add(slot);
 				++visible;
@@ -785,7 +791,6 @@ public class DuplicatePrayersPlugin extends Plugin
 		EnumComposition prayerBookEnum = getPrayerBookEnum(prayerbook);
 
 		List<Slot> slots = getPrayerSlots(prayerbook);
-		int hiddenSlotsCoveredByDuplicates = countDuplicates(slots);
 
 		Set<Integer> renderedOriginals = new HashSet<>();
 		List<DuplicateRender> duplicateRenders = new ArrayList<>();
@@ -796,11 +801,7 @@ public class DuplicatePrayersPlugin extends Plugin
 			boolean hidden = isHiddenSlot(prayerbook, slot);
 			if (hidden)
 			{
-				if (hiddenSlotsCoveredByDuplicates > 0)
-				{
-					--hiddenSlotsCoveredByDuplicates;
-					continue;
-				}
+				boolean coveredByLinkedDuplicate = hasDuplicateForPrayer(slots, slot.getPrayerId());
 
 				if (index >= MAX_VISIBLE_PRAYERS)
 				{
@@ -810,7 +811,7 @@ public class DuplicatePrayersPlugin extends Plugin
 				Widget hiddenWidget = getPrayerWidget(prayerBookEnum, slot.getPrayerId());
 				if (hiddenWidget != null)
 				{
-					if (prayerReordering)
+					if (prayerReordering && !coveredByLinkedDuplicate)
 					{
 						int x = (index % PRAYER_COLUMN_COUNT) * PRAYER_X_OFFSET;
 						int y = (index / PRAYER_COLUMN_COUNT) * PRAYER_Y_OFFSET;
@@ -819,9 +820,9 @@ public class DuplicatePrayersPlugin extends Plugin
 						hiddenWidget.setOpacity(150);
 						hiddenWidget.setPos(x, y);
 						hiddenWidget.setAction(0, null);
-						hiddenWidget.setAction(DUPLICATE_OP, null);
+						hiddenWidget.setAction(DUPLICATE_OP, DUPLICATE);
 						hiddenWidget.setClickMask(hiddenWidget.getClickMask() & ~(DRAG | DRAG_ON));
-						hiddenWidget.setHasListener(false);
+						hiddenWidget.setHasListener(true);
 						hiddenWidget.revalidate();
 					}
 					else
@@ -830,7 +831,10 @@ public class DuplicatePrayersPlugin extends Plugin
 					}
 				}
 
-				++index;
+				if (!coveredByLinkedDuplicate)
+				{
+					++index;
+				}
 				continue;
 			}
 
@@ -867,7 +871,7 @@ public class DuplicatePrayersPlugin extends Plugin
 				// per ongeluk geactiveerd kunnen worden. De widget blijft klikbaar zodat de
 				// native Hide/Unhide-optie en onze Duplicate-optie beschikbaar blijven.
 				original.setAction(0, hidden ? null : getPrimaryAction(original, slot.getPrayerId()));
-				original.setAction(DUPLICATE_OP, prayerReordering && visibleSlotCount(prayerbook, slots) < MAX_VISIBLE_PRAYERS ? DUPLICATE : null);
+				original.setAction(DUPLICATE_OP, null);
 				original.revalidate();
 			}
 			index++;
@@ -1323,6 +1327,18 @@ public class DuplicatePrayersPlugin extends Plugin
 			}
 		}
 		return count;
+	}
+
+	private boolean hasDuplicateForPrayer(List<Slot> slots, int prayerId)
+	{
+		for (Slot slot : slots)
+		{
+			if (slot.isDuplicate() && slot.getPrayerId() == prayerId)
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	@Provides
