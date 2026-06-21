@@ -845,8 +845,16 @@ public class DuplicatePrayersPlugin extends Plugin
 
 	private void setHidden(int prayerbook, int prayerId, boolean hidden)
 	{
+		applyHiddenState(prayerbook, prayerId, hidden);
+		clientThread.invokeLater(() -> applyHiddenState(prayerbook, prayerId, hidden));
+	}
+
+	private void applyHiddenState(int prayerbook, int prayerId, boolean hidden)
+	{
 		setHiddenConfig(prayerbook, prayerId, hidden);
 		updatePrayerHiddenStyle(prayerbook, prayerId, hidden);
+		List<Slot> slots = getPrayerSlots(prayerbook);
+		setPrayerSlots(prayerbook, slots);
 		rebuildPrayers();
 	}
 
@@ -893,11 +901,7 @@ public class DuplicatePrayersPlugin extends Plugin
 
 	private void unhidePrayer(int prayerbook, int prayerId)
 	{
-		setHiddenConfig(prayerbook, prayerId, false);
-		updatePrayerHiddenStyle(prayerbook, prayerId, false);
-		List<Slot> slots = getPrayerSlots(prayerbook);
-		setPrayerSlots(prayerbook, slots);
-		rebuildPrayers();
+		setHidden(prayerbook, prayerId, false);
 	}
 
 	private String getPrayerName(EnumComposition prayerBookEnum, int prayerId)
@@ -1242,30 +1246,6 @@ public class DuplicatePrayersPlugin extends Plugin
 				removeDuplicate(prayerbook, slot);
 			}
 		});
-
-		Widget[] dynamicChildren = widget.getDynamicChildren();
-		if (dynamicChildren != null)
-		{
-			for (Widget child : dynamicChildren)
-			{
-				if (child != null)
-				{
-					configureDuplicateWidgetTree(child, slot, clickMask);
-				}
-			}
-		}
-
-		Widget[] staticChildren = widget.getStaticChildren();
-		if (staticChildren != null)
-		{
-			for (Widget child : staticChildren)
-			{
-				if (child != null)
-				{
-					configureDuplicateWidgetTree(child, slot, clickMask);
-				}
-			}
-		}
 	}
 
 	private void registerDuplicateWidgetTree(Widget widget, Slot slot)
